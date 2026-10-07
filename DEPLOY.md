@@ -2,10 +2,12 @@
 
 ### Prerequisites
 
-1. **Supabase Projects**
-   - Create 2 separate Supabase projects (free tier limit)
-   - One for production, one for preview/testing
-   - Go to https://database.new to create projects
+1. **Supabase Project with Schema Isolation**
+   - Single Supabase project: `backchannel` (ref: arfxachrbugnvbneyboe)
+   - Region: us-east-1
+   - Production schema: `backchannel`
+   - Preview schema: `backchannel_preview`
+   - See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for role setup
 
 2. **Vercel Account**
    - Vercel project linked to this repository
@@ -13,24 +15,29 @@
 
 ### Supabase Configuration
 
-#### Connection Strings
+#### Connection Strings and Roles
 
-For each project, get the **session pooler** connection string:
+The project uses **role-based schema isolation**:
 
-1. Go to Project Settings > Database
-2. Select "Session pooler" mode (port 5432)
-3. Copy the connection string
-4. Add `?sslmode=require` parameter
+**Production** (schema: `backchannel`):
+- Migration role: `backchannel_migrate` (DDL privileges)
+- Runtime role: `backchannel_runtime` (DML privileges)
 
-Example:
+**Preview** (schema: `backchannel_preview`):
+- Migration role: `backchannel_preview_migrate`
+- Runtime role: `backchannel_preview_runtime`
+
+Connection string format (session pooler, port 5432):
 ```
-postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://[role]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
-**Why session pooler?**
+**Why session pooler (port 5432)?**
 - Supports prepared statements (required by sqlx)
 - Supports advisory locks (required for message ordering)
 - Transaction pooler (port 6543) does NOT support these features
+
+**See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for complete role and grant setup.**
 
 #### SSL Configuration
 
@@ -75,7 +82,10 @@ Set via Vercel dashboard or CLI:
 
 ```bash
 vercel env add DATABASE_URL production
-# Paste production Supabase connection string
+# Paste: postgresql://backchannel_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+
+vercel env add DATABASE_SCHEMA production
+# Enter: backchannel
 
 vercel env add ADMIN_TOKEN_SHA256 production
 # Paste production admin token hash
@@ -85,13 +95,16 @@ vercel env add ADMIN_TOKEN_SHA256 production
 
 ```bash
 vercel env add DATABASE_URL preview
-# Paste preview Supabase connection string
+# Paste: postgresql://backchannel_preview_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+
+vercel env add DATABASE_SCHEMA preview
+# Enter: backchannel_preview
 
 vercel env add ADMIN_TOKEN_SHA256 preview
-# Paste preview admin token hash
+# Paste preview admin token hash (DIFFERENT from production)
 ```
 
-**Critical**: Use separate credentials for preview and production.
+**Critical**: Use separate runtime roles, schemas, and admin tokens for preview and production.
 
 ### Deploy
 

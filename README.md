@@ -29,44 +29,39 @@ All messages are stored durably in Supabase Postgres with strong ordering guaran
 
 ## Supabase Setup
 
-### 1. Create Supabase Projects
+### Schema-Based Isolation (Single Project)
 
-Create **two separate projects** for isolation (free tier includes 2 projects):
+Backchannel uses **schema isolation** within a single Supabase project to support multiple environments on the free tier:
 
-- **Production**: Your main project
-- **Preview**: For testing and preview deployments
+- **Production**: `backchannel` schema
+- **Preview**: `backchannel_preview` schema
 
-Go to [database.new](https://database.new) to create each project.
+Each environment has dedicated roles (runtime and migration) with access only to its schema.
 
-### 2. Get Connection Strings
+**See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for complete role and grant setup.**
 
-For each project, go to **Project Settings > Database > Connection string**:
+### Quick Start
 
-1. Select **Session pooler** mode (port 5432)
-2. Copy the connection string
-3. Add `?sslmode=require` to the end
+1. **Set up roles and schemas** following [SUPABASE_SETUP.md](./SUPABASE_SETUP.md)
+2. **Get connection strings** for runtime and migration roles (session pooler, port 5432)
+3. **Run migrations** for each environment with appropriate `DATABASE_SCHEMA` set
+4. **Deploy** to Vercel with environment-specific configuration
 
-Example format:
-```
-postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres?sslmode=require
-```
-
-**Important**: Use the **session pooler (port 5432)** for the Vercel function to support prepared statements and advisory locks. The transaction pooler (port 6543) does not support these features.
-
-For migrations and `pg_dump`, you can use either the session pooler or direct connection (port 5432 or 6543).
+**Important**: Use the **session pooler (port 5432)** to support prepared statements and advisory locks. The transaction pooler (port 6543) does not support these features.
 
 ### 3. SSL Certificate Verification
 
 Supabase uses TLS with valid certificates from Let's Encrypt. The `sslmode=require` parameter enables certificate verification against the system CA bundle. No additional CA file is needed.
 
-### 4. Free Tier Limitations
+### Free Tier Limitations
 
 Be aware of these free tier constraints:
 
 - **Inactivity pausing**: Projects pause after 1 week of inactivity. They resume on the next connection.
 - **No automatic backups**: Free tier does not include point-in-time recovery or automated backups.
 - **Manual backups required**: Use the encrypted `pg_dump` backup procedure (see below).
-- **2 projects maximum**: Use one for production, one for preview.
+- **500 MB database limit**: Shared across all schemas in the project.
+- **Schema isolation**: Use separate schemas (`backchannel` and `backchannel_preview`) instead of separate projects.
 
 ## Local Development
 
@@ -151,17 +146,21 @@ vercel env add ADMIN_TOKEN_SHA256 preview
 
 ### 4. Run Migrations
 
-Before deploying, run migrations on both databases:
+Before deploying, run migrations for both environments (use migration roles):
 
 ```bash
 # Production
-export DATABASE_URL="postgresql://postgres.prod-ref:..."
+export DATABASE_URL="postgresql://backchannel_migrate:password@..."
+export DATABASE_SCHEMA="backchannel"
 cargo run --bin backchannel-migrate
 
 # Preview
-export DATABASE_URL="postgresql://postgres.preview-ref:..."
+export DATABASE_URL="postgresql://backchannel_preview_migrate:password@..."
+export DATABASE_SCHEMA="backchannel_preview"
 cargo run --bin backchannel-migrate
 ```
+
+See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for role setup.
 
 ### 5. Deploy
 

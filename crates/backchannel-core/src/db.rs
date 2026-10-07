@@ -8,19 +8,35 @@ use std::str::FromStr;
 
 /// Create a database connection pool with bounded connections
 /// Configured for Supabase with session pooler (port 5432) to support prepared statements
-pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
+pub async fn create_pool(database_url: &str, schema: &str) -> Result<PgPool, sqlx::Error> {
     let mut options = PgConnectOptions::from_str(database_url)?;
-
+    
     // Ensure SSL is required with certificate verification for Supabase
     // Always set to Require mode for production use
     options = options.ssl_mode(PgSslMode::Require);
-
-    PgPoolOptions::new()
+    
+    // Set search_path to use the specified schema
+    options = options.application_name("backchannel");
+    
+    let schema = schema.to_string();
+    
+    let pool = PgPoolOptions::new()
         .max_connections(10)
         .min_connections(2)
         .acquire_timeout(std::time::Duration::from_secs(5))
+        .after_connect(move |conn, _meta| {
+            let schema = schema.clone();
+            Box::pin(async move {
+                sqlx::query(&format!("SET search_path TO {}", schema))
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect_with(options)
-        .await
+        .await?;
+    
+    Ok(pool)
 }
 
 /// Advisory lock key for message ordering (arbitrary constant)

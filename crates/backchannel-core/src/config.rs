@@ -3,6 +3,7 @@ use std::env;
 #[derive(Clone)]
 pub struct Config {
     pub database_url: String,
+    pub database_schema: String,
     pub admin_token_sha256: String,
     pub default_rate_limit_per_minute: u32,
     pub admin_rate_limit_per_minute: u32,
@@ -15,6 +16,8 @@ impl Config {
         Ok(Config {
             database_url: env::var("DATABASE_URL")
                 .map_err(|_| "DATABASE_URL environment variable required".to_string())?,
+            database_schema: env::var("DATABASE_SCHEMA")
+                .unwrap_or_else(|_| "backchannel".to_string()),
             admin_token_sha256: env::var("ADMIN_TOKEN_SHA256")
                 .map_err(|_| "ADMIN_TOKEN_SHA256 environment variable required".to_string())?,
             default_rate_limit_per_minute: env::var("RATE_LIMIT_PER_MINUTE")

@@ -3,7 +3,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::sync::Arc;
 use tower::ServiceExt;
 
 // Test helpers
@@ -12,7 +11,10 @@ async fn setup_test_db() -> PgPool {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .expect("TEST_DATABASE_URL must be set for integration tests");
     
-    let pool = db::create_pool(&database_url)
+    let schema = std::env::var("TEST_DATABASE_SCHEMA")
+        .unwrap_or_else(|_| "backchannel_test".to_string());
+    
+    let pool = db::create_pool(&database_url, &schema)
         .await
         .expect("Failed to create test database pool");
     
@@ -69,6 +71,7 @@ async fn make_request(
 async fn test_1_authentication() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -125,6 +128,7 @@ async fn test_1_authentication() {
 async fn test_2_public_channel_operations() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -204,6 +208,7 @@ async fn test_2_public_channel_operations() {
 async fn test_3_dm_privacy() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -213,7 +218,7 @@ async fn test_3_dm_privacy() {
     };
     let router = create_router(pool.clone(), config);
     
-    let (agent1_id, token1) = create_test_agent(&pool, "alice").await;
+    let (_agent1_id, token1) = create_test_agent(&pool, "alice").await;
     let (agent2_id, token2) = create_test_agent(&pool, "bob").await;
     let (_agent3_id, token3) = create_test_agent(&pool, "charlie").await;
     
@@ -333,6 +338,7 @@ async fn test_4_concurrent_dm_creation() {
 async fn test_5_message_idempotency() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -342,7 +348,7 @@ async fn test_5_message_idempotency() {
     };
     let router = create_router(pool.clone(), config);
     
-    let (agent1_id, token1) = create_test_agent(&pool, "alice").await;
+    let (_agent1_id, token1) = create_test_agent(&pool, "alice").await;
     
     // Create channel
     let (_, body) = make_request(
@@ -404,6 +410,7 @@ async fn test_5_message_idempotency() {
 async fn test_6_pagination_ordering() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -485,6 +492,7 @@ async fn test_6_pagination_ordering() {
 async fn test_7_validation_and_limits() {
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,
@@ -494,7 +502,7 @@ async fn test_7_validation_and_limits() {
     };
     let router = create_router(pool.clone(), config);
     
-    let (agent1_id, token1) = create_test_agent(&pool, "alice").await;
+    let (_agent1_id, token1) = create_test_agent(&pool, "alice").await;
     
     // Create channel
     let (_, body) = make_request(
@@ -571,6 +579,7 @@ async fn test_8_admin_operations() {
     let pool = setup_test_db().await;
     let admin_token = "admin_secret";
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token(admin_token),
         default_rate_limit_per_minute: 120,
@@ -580,8 +589,8 @@ async fn test_8_admin_operations() {
     };
     let router = create_router(pool.clone(), config);
     
-    let (agent1_id, token1) = create_test_agent(&pool, "alice").await;
-    let (agent2_id, token2) = create_test_agent(&pool, "bob").await;
+    let (_agent1_id, token1) = create_test_agent(&pool, "alice").await;
+    let (agent2_id, _token2) = create_test_agent(&pool, "bob").await;
     
     // Create DM and post message
     let (_, body) = make_request(
@@ -661,6 +670,7 @@ async fn test_10_database_unavailability() {
     
     let pool = setup_test_db().await;
     let config = Config {
+        database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
         default_rate_limit_per_minute: 120,

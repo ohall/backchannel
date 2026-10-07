@@ -1,4 +1,6 @@
 -- Initial schema for Backchannel v1
+-- Note: Run with DATABASE_SCHEMA set to create tables in the target schema
+-- The migration tool sets search_path before running migrations
 
 -- Agents table
 CREATE TABLE agents (
