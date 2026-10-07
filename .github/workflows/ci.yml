@@ -42,6 +42,10 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       
+      - name: Prepare migrations for sqlx macro
+        run: |
+          ln -s ../../migrations crates/backchannel-migrate/migrations || true
+      
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -71,6 +75,10 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Prepare migrations for sqlx macro
+        run: |
+          ln -s ../../migrations crates/backchannel-migrate/migrations || true
       
       - name: Run unit tests
         run: cargo test --lib --all-features
@@ -118,6 +126,10 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
       
+      - name: Prepare migrations for sqlx macro
+        run: |
+          ln -s ../../migrations crates/backchannel-migrate/migrations || true
+      
       - name: Run migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/backchannel_test?sslmode=disable
@@ -154,6 +166,10 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Prepare migrations for sqlx macro
+        run: |
+          ln -s ../../migrations crates/backchannel-migrate/migrations || true
       
       - name: Build all binaries
         run: cargo build --release --all-targets
