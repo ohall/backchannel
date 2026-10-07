@@ -61,6 +61,10 @@ name = "backchannel-workspace"
 version = "0.1.0"
 edition = "2021"
 
+# This is a test-only package, not a library
+[lib]
+path = "src/lib.rs"
+
 [dev-dependencies]
 backchannel-core = { path = "crates/backchannel-core" }
 tokio = { workspace = true }

@@ -17,7 +17,10 @@ async fn main() -> anyhow::Result<()> {
     let config =
         Config::from_env().map_err(|e| anyhow::anyhow!("Failed to load configuration: {}", e))?;
 
-    tracing::info!("Connecting to database (schema: {})", config.database_schema);
+    tracing::info!(
+        "Connecting to database (schema: {})",
+        config.database_schema
+    );
     let pool = db::create_pool(&config.database_url, &config.database_schema)
         .await
         .context("Failed to create database pool")?;

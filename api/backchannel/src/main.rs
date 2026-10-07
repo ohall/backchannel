@@ -19,7 +19,10 @@ fn get_router() -> Result<&'static axum::Router, Error> {
         let config = Config::from_env().map_err(|e| Error::from(format!("Config error: {}", e)))?;
 
         let pool = rt
-            .block_on(db::create_pool(&config.database_url, &config.database_schema))
+            .block_on(db::create_pool(
+                &config.database_url,
+                &config.database_schema,
+            ))
             .map_err(|e| Error::from(format!("Database connection error: {}", e)))?;
 
         Ok::<_, Error>(create_router(pool, config))

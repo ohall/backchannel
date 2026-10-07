@@ -14,8 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Connecting to database for migrations (schema: {})", schema);
 
-    let options =
-        PgConnectOptions::from_str(&database_url).context("Invalid DATABASE_URL")?;
+    let options = PgConnectOptions::from_str(&database_url).context("Invalid DATABASE_URL")?;
 
     let pool = PgPoolOptions::new()
         .max_connections(1)

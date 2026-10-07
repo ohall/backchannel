@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
                 env::var("DATABASE_URL").context("DATABASE_URL environment variable required")?;
 
             let schema = env::var("DATABASE_SCHEMA").unwrap_or_else(|_| "backchannel".to_string());
-            
+
             let pool = db::create_pool(&database_url, &schema)
                 .await
                 .context("Failed to connect to database")?;

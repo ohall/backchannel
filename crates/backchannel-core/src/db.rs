@@ -10,16 +10,16 @@ use std::str::FromStr;
 /// Configured for Supabase with session pooler (port 5432) to support prepared statements
 pub async fn create_pool(database_url: &str, schema: &str) -> Result<PgPool, sqlx::Error> {
     let mut options = PgConnectOptions::from_str(database_url)?;
-    
+
     // Ensure SSL is required with certificate verification for Supabase
     // Always set to Require mode for production use
     options = options.ssl_mode(PgSslMode::Require);
-    
+
     // Set search_path to use the specified schema
     options = options.application_name("backchannel");
-    
+
     let schema = schema.to_string();
-    
+
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .min_connections(2)
@@ -35,7 +35,7 @@ pub async fn create_pool(database_url: &str, schema: &str) -> Result<PgPool, sql
         })
         .connect_with(options)
         .await?;
-    
+
     Ok(pool)
 }
 
