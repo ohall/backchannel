@@ -313,7 +313,7 @@ Supabase branching is a **paid feature** (not available on free tier). For free 
 - Pooler host is `aws-0-us-east-1.pooler.supabase.com:5432`; usernames use the `role.projectref` form
   (e.g. `backchannel_runtime.arfxachrbugnvbneyboe`). `aws-1-...` rejects this project's tenant.
 - `vercel.json` uses the `@vercel/rust` builder for `api/backchannel/src/main.rs`; the function is served at
-  `/api/backchannel/src/main` and every path is routed there (the original path is preserved for axum).
+  `/api/backchannel/src/main.rs` (explicit `builds` keep the extension) and every path is routed there (the original path is preserved for axum).
 - Do not put `@secret` references in `vercel.json` `env`; Vercel secrets are retired. Set env vars on the project.
 - The migration roles only have `USAGE, CREATE` on their own schema; `backchannel-migrate` skips
   `CREATE SCHEMA` when the schema already exists, so no database-level `CREATE` is required.
