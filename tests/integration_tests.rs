@@ -805,11 +805,26 @@ async fn test_11_pg_dump_restore_isolation() {
     let dump_sql = String::from_utf8(dump_output.stdout).unwrap();
 
     // Verify dump contains expected schema elements
-    assert!(dump_sql.contains("CREATE TABLE"), "Dump should contain CREATE TABLE statements");
-    assert!(dump_sql.contains("agents"), "Dump should contain agents table");
-    assert!(dump_sql.contains("conversations"), "Dump should contain conversations table");
-    assert!(dump_sql.contains("messages"), "Dump should contain messages table");
-    assert!(dump_sql.contains("rate_limit_buckets"), "Dump should contain rate_limit_buckets table");
+    assert!(
+        dump_sql.contains("CREATE TABLE"),
+        "Dump should contain CREATE TABLE statements"
+    );
+    assert!(
+        dump_sql.contains("agents"),
+        "Dump should contain agents table"
+    );
+    assert!(
+        dump_sql.contains("conversations"),
+        "Dump should contain conversations table"
+    );
+    assert!(
+        dump_sql.contains("messages"),
+        "Dump should contain messages table"
+    );
+    assert!(
+        dump_sql.contains("rate_limit_buckets"),
+        "Dump should contain rate_limit_buckets table"
+    );
 
     // Create a new isolated schema and restore the structure
     let restore_schema = "backchannel_restore_test";
@@ -853,16 +868,21 @@ async fn test_11_pg_dump_restore_isolation() {
         .write_all(modified_dump.as_bytes())
         .expect("Failed to write to psql stdin");
 
-    let restore_output = restore_cmd.wait_with_output().expect("Failed to wait for psql");
+    let restore_output = restore_cmd
+        .wait_with_output()
+        .expect("Failed to wait for psql");
 
     if !restore_output.status.success() {
-        eprintln!("Restore stderr: {}", String::from_utf8_lossy(&restore_output.stderr));
+        eprintln!(
+            "Restore stderr: {}",
+            String::from_utf8_lossy(&restore_output.stderr)
+        );
         panic!("Restore failed");
     }
 
     // Verify schema exists
     let schema_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = $1"
+        "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = $1",
     )
     .bind(restore_schema)
     .fetch_one(&pool)
@@ -872,20 +892,29 @@ async fn test_11_pg_dump_restore_isolation() {
     assert_eq!(schema_count, 1, "Restored schema not found");
 
     // Verify tables exist in restored schema
-    let table_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1"
-    )
-    .bind(restore_schema)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let table_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1")
+            .bind(restore_schema)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
-    assert!(table_count >= 5, "Expected at least 5 tables in restored schema, got {}", table_count);
+    assert!(
+        table_count >= 5,
+        "Expected at least 5 tables in restored schema, got {}",
+        table_count
+    );
 
     // Verify specific tables exist
-    for table in &["agents", "conversations", "messages", "dm_members", "rate_limit_buckets"] {
+    for table in &[
+        "agents",
+        "conversations",
+        "messages",
+        "dm_members",
+        "rate_limit_buckets",
+    ] {
         let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2)"
+            "SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2)",
         )
         .bind(restore_schema)
         .bind(table)

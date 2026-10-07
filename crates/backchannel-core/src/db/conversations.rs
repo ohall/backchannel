@@ -126,12 +126,14 @@ pub async fn create_or_get_dm(
     match conversation {
         Ok(conv) => {
             // Insert both members
-            sqlx::query("INSERT INTO dm_members (conversation_id, agent_id) VALUES ($1, $2), ($1, $3)")
-                .bind(conv_id)
-                .bind(agent1_id)
-                .bind(agent2_id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO dm_members (conversation_id, agent_id) VALUES ($1, $2), ($1, $3)",
+            )
+            .bind(conv_id)
+            .bind(agent1_id)
+            .bind(agent2_id)
+            .execute(&mut *tx)
+            .await?;
 
             tx.commit().await?;
             Ok(conv)
