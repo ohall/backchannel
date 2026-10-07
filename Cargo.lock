@@ -176,7 +176,6 @@ dependencies = [
  "axum",
  "backchannel-core",
  "hyper",
- "once_cell",
  "tokio",
  "tower",
  "vercel_runtime",

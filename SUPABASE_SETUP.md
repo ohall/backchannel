@@ -25,7 +25,7 @@ Get the postgres password from Supabase Dashboard:
 - Project Settings > Database > Database password
 
 ```bash
-psql "postgresql://postgres.arfxachrbugnvbneyboe:[YOUR_PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
+psql "postgresql://postgres.arfxachrbugnvbneyboe:[YOUR_PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 ```
 
 ### 2. Create Schemas
@@ -86,7 +86,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA backchannel_preview
 
 ### 5. Grant Permissions on Existing Objects (After Migrations)
 
-After running migrations, grant permissions on the created tables:
+Migrations create tables owned by the migration role, so the `ALTER DEFAULT PRIVILEGES` statements
+in steps 3-4 (run as `postgres`) do not apply to them. After running migrations, connect **as each
+schema's migration role** and run the grants below, plus default privileges for future tables:
+
+```sql
+-- as backchannel_migrate
+ALTER DEFAULT PRIVILEGES IN SCHEMA backchannel GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO backchannel_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA backchannel GRANT USAGE, SELECT ON SEQUENCES TO backchannel_runtime;
+REVOKE ALL ON TABLE backchannel._sqlx_migrations FROM backchannel_runtime;
+-- (same for backchannel_preview_migrate / backchannel_preview_runtime)
+```
+
+Grants on existing tables:
 
 ```sql
 -- Production
@@ -123,24 +135,24 @@ RESET ROLE;
 
 **Migration** (for running `cargo run --bin backchannel-migrate`):
 ```
-postgresql://backchannel_migrate:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 **Runtime** (for Vercel function):
 ```
-postgresql://backchannel_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 ### Preview
 
 **Migration**:
 ```
-postgresql://backchannel_preview_migrate:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 **Runtime**:
 ```
-postgresql://backchannel_preview_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 ## Environment Variables
@@ -148,7 +160,7 @@ postgresql://backchannel_preview_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supab
 ### Production
 
 ```bash
-DATABASE_URL=postgresql://backchannel_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 DATABASE_SCHEMA=backchannel
 ADMIN_TOKEN_SHA256=[PRODUCTION_HASH]
 ```
@@ -156,7 +168,7 @@ ADMIN_TOKEN_SHA256=[PRODUCTION_HASH]
 ### Preview
 
 ```bash
-DATABASE_URL=postgresql://backchannel_preview_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 DATABASE_SCHEMA=backchannel_preview
 ADMIN_TOKEN_SHA256=[PREVIEW_HASH]
 ```
@@ -166,7 +178,7 @@ ADMIN_TOKEN_SHA256=[PREVIEW_HASH]
 ### Production
 
 ```bash
-export DATABASE_URL="postgresql://backchannel_migrate:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 export DATABASE_SCHEMA="backchannel"
 cargo run --bin backchannel-migrate
 ```
@@ -174,7 +186,7 @@ cargo run --bin backchannel-migrate
 ### Preview
 
 ```bash
-export DATABASE_URL="postgresql://backchannel_preview_migrate:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 export DATABASE_SCHEMA="backchannel_preview"
 cargo run --bin backchannel-migrate
 ```

@@ -22,10 +22,21 @@ async fn main() -> anyhow::Result<()> {
         .after_connect(move |conn, _meta| {
             let schema = schema_for_connect.clone();
             Box::pin(async move {
-                // Create schema if it doesn't exist
-                sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {}", schema))
-                    .execute(&mut *conn)
-                    .await?;
+                // Create schema only if it doesn't exist. `CREATE SCHEMA IF NOT EXISTS`
+                // checks CREATE-on-database privilege even when the schema already
+                // exists, so a least-privilege migration role (USAGE+CREATE on its
+                // own schema only) would fail. Check the catalog first instead.
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+                )
+                .bind(&schema)
+                .fetch_one(&mut *conn)
+                .await?;
+                if !exists {
+                    sqlx::query(&format!("CREATE SCHEMA {}", schema))
+                        .execute(&mut *conn)
+                        .await?;
+                }
 
                 // Set search_path for this connection
                 sqlx::query(&format!("SET search_path TO {}", schema))
