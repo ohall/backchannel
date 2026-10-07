@@ -744,7 +744,7 @@ async fn test_10_database_unavailability() {
 async fn test_11_pg_dump_restore_isolation() {
     let pool = setup_test_db().await;
 
-    let (agent_id, token) = create_test_agent(&pool, "alice").await;
+    let (_agent_id, token) = create_test_agent(&pool, "alice").await;
 
     let config = Config {
         database_schema: "backchannel_test".to_string(),

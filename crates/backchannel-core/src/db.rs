@@ -2,21 +2,21 @@ pub mod agents;
 pub mod conversations;
 pub mod messages;
 
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::PgPool;
 use std::str::FromStr;
 
 /// Create a database connection pool with bounded connections
 /// Configured for Supabase with session pooler (port 5432) to support prepared statements
 pub async fn create_pool(database_url: &str, schema: &str) -> Result<PgPool, sqlx::Error> {
-    let mut options = PgConnectOptions::from_str(database_url)?;
+    let options = PgConnectOptions::from_str(database_url)?;
 
-    // Ensure SSL is required with certificate verification for Supabase
-    // Always set to Require mode for production use
-    options = options.ssl_mode(PgSslMode::Require);
+    // Note: SSL mode is controlled by the connection URL (sslmode parameter)
+    // Production Supabase connections should use sslmode=require
+    // Test environments may use sslmode=disable
 
     // Set search_path to use the specified schema
-    options = options.application_name("backchannel");
+    let options = options.application_name("backchannel");
 
     let schema = schema.to_string();
 

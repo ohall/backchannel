@@ -139,6 +139,7 @@ jobs:
       - name: Run integration tests
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/backchannel_test?sslmode=disable
+          TEST_ADMIN_TOKEN_SHA256: 9cf95dacd226dcf43da376cdb6cbba7035218921b7dd37ddb2d5cc2a1775f2e7
         run: cargo test --tests
 
   build:
