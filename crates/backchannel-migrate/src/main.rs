@@ -16,10 +16,11 @@ async fn main() -> anyhow::Result<()> {
 
     let options = PgConnectOptions::from_str(&database_url).context("Invalid DATABASE_URL")?;
 
+    let schema_for_connect = schema.clone();
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .after_connect(move |conn, _meta| {
-            let schema = schema.clone();
+            let schema = schema_for_connect.clone();
             Box::pin(async move {
                 // Create schema if it doesn't exist
                 sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {}", schema))

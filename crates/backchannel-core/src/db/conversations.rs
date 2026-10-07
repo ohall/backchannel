@@ -121,28 +121,40 @@ pub async fn create_or_get_dm(
     .bind(agent1_id)
     .bind(&canonical_key)
     .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| {
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.constraint() == Some("conversations_dm_canonical_key_key") {
-                // Another concurrent request created it
-                return AppError::Conflict("DM already exists".to_string());
-            }
+    .await;
+
+    match conversation {
+        Ok(conv) => {
+            // Insert both members
+            sqlx::query("INSERT INTO dm_members (conversation_id, agent_id) VALUES ($1, $2), ($1, $3)")
+                .bind(conv_id)
+                .bind(agent1_id)
+                .bind(agent2_id)
+                .execute(&mut *tx)
+                .await?;
+
+            tx.commit().await?;
+            Ok(conv)
         }
-        e.into()
-    })?;
-
-    // Insert both members
-    sqlx::query("INSERT INTO dm_members (conversation_id, agent_id) VALUES ($1, $2), ($1, $3)")
-        .bind(conv_id)
-        .bind(agent1_id)
-        .bind(agent2_id)
-        .execute(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    Ok(conversation)
+        Err(sqlx::Error::Database(ref db_err))
+            if db_err.constraint() == Some("conversations_dm_canonical_key_key") =>
+        {
+            // Concurrent request created it - fetch and return
+            drop(tx);
+            sqlx::query_as::<_, Conversation>(
+                r#"
+                SELECT id, conversation_type, name, description, creator_id, dm_canonical_key, created_at
+                FROM conversations
+                WHERE dm_canonical_key = $1
+                "#,
+            )
+            .bind(&canonical_key)
+            .fetch_one(pool)
+            .await
+            .map_err(Into::into)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// List public channels with pagination

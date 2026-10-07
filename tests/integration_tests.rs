@@ -739,3 +739,166 @@ async fn test_10_database_unavailability() {
         .to_lowercase()
         .contains("postgres"));
 }
+
+#[tokio::test]
+async fn test_11_pg_dump_restore_isolation() {
+    let pool = setup_test_db().await;
+
+    let (agent_id, token) = create_test_agent(&pool, "alice").await;
+
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    // Create test data
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/v1/channels",
+        Some(&token),
+        Some(json!({"name": "general", "description": "Test channel"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let conv_id = body["id"].as_str().unwrap().to_string();
+
+    let (status, _) = make_request(
+        &router,
+        "POST",
+        &format!("/v1/conversations/{}/messages", conv_id),
+        Some(&token),
+        Some(json!({
+            "client_message_id": "test-msg-1",
+            "body": "Test message content"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Dump the schema
+    let database_url = std::env::var("TEST_DATABASE_URL").unwrap();
+    let schema_name = "backchannel_test";
+
+    let dump_output = std::process::Command::new("pg_dump")
+        .arg(database_url.clone())
+        .arg("--schema")
+        .arg(schema_name)
+        .arg("--schema-only")
+        .arg("--no-owner")
+        .arg("--no-acl")
+        .output()
+        .expect("Failed to run pg_dump");
+
+    assert!(
+        dump_output.status.success(),
+        "pg_dump failed: {}",
+        String::from_utf8_lossy(&dump_output.stderr)
+    );
+
+    let dump_sql = String::from_utf8(dump_output.stdout).unwrap();
+
+    // Verify dump contains expected schema elements
+    assert!(dump_sql.contains("CREATE TABLE"), "Dump should contain CREATE TABLE statements");
+    assert!(dump_sql.contains("agents"), "Dump should contain agents table");
+    assert!(dump_sql.contains("conversations"), "Dump should contain conversations table");
+    assert!(dump_sql.contains("messages"), "Dump should contain messages table");
+    assert!(dump_sql.contains("rate_limit_buckets"), "Dump should contain rate_limit_buckets table");
+
+    // Create a new isolated schema and restore the structure
+    let restore_schema = "backchannel_restore_test";
+    sqlx::query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", restore_schema))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Prepare modified dump that creates and uses the new schema
+    let modified_dump = dump_sql
+        .lines()
+        .filter(|line| !line.starts_with("\\"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(
+            &format!("CREATE SCHEMA {};", schema_name),
+            &format!("CREATE SCHEMA {};", restore_schema),
+        )
+        .replace(
+            &format!("{}.", schema_name),
+            &format!("{}.", restore_schema),
+        )
+        .replace(
+            &format!("SET search_path = {}", schema_name),
+            &format!("SET search_path = {}", restore_schema),
+        );
+
+    use std::io::Write;
+    let mut restore_cmd = std::process::Command::new("psql")
+        .arg(&database_url)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn psql restore");
+
+    restore_cmd
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(modified_dump.as_bytes())
+        .expect("Failed to write to psql stdin");
+
+    let restore_output = restore_cmd.wait_with_output().expect("Failed to wait for psql");
+
+    if !restore_output.status.success() {
+        eprintln!("Restore stderr: {}", String::from_utf8_lossy(&restore_output.stderr));
+        panic!("Restore failed");
+    }
+
+    // Verify schema exists
+    let schema_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = $1"
+    )
+    .bind(restore_schema)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(schema_count, 1, "Restored schema not found");
+
+    // Verify tables exist in restored schema
+    let table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pg_tables WHERE schemaname = $1"
+    )
+    .bind(restore_schema)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert!(table_count >= 5, "Expected at least 5 tables in restored schema, got {}", table_count);
+
+    // Verify specific tables exist
+    for table in &["agents", "conversations", "messages", "dm_members", "rate_limit_buckets"] {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2)"
+        )
+        .bind(restore_schema)
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(exists, "Table {} not found in restored schema", table);
+    }
+
+    // Clean up
+    sqlx::query(&format!("DROP SCHEMA {} CASCADE", restore_schema))
+        .execute(&pool)
+        .await
+        .unwrap();
+}
