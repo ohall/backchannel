@@ -29,7 +29,7 @@ The project uses **role-based schema isolation**:
 
 Connection string format (session pooler, port 5432):
 ```
-postgresql://[role]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://[role].[project-ref]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 **Why session pooler (port 5432)?**
@@ -41,23 +41,24 @@ postgresql://[role]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres
 
 #### SSL Configuration
 
-- Supabase uses Let's Encrypt certificates
-- `sslmode=require` enables verification against system CA bundle
-- No additional CA file needed
-- Certificate verification is automatic with rustls
+- Deployed URLs MUST include `sslmode=require`; the code follows the URL and does not force TLS.
+- With sqlx, `sslmode=require` encrypts the connection but does not verify the server certificate.
+- For full verification use `sslmode=verify-full&sslrootcert=<supabase-root-ca>` (not configured in v1).
 
 ### Database Migrations
 
 Run migrations **before** deploying code:
 
 ```bash
-# Production
-export DATABASE_URL="postgresql://postgres.prod-ref:password@..."
-cargo run --bin backchannel-migrate
+# Production (migration role, not postgres)
+export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_SCHEMA=backchannel
+cargo run -p backchannel-migrate --bin backchannel-migrate
 
 # Preview
-export DATABASE_URL="postgresql://postgres.preview-ref:password@..."
-cargo run --bin backchannel-migrate
+export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_SCHEMA=backchannel_preview
+cargo run -p backchannel-migrate --bin backchannel-migrate
 ```
 
 ### Admin Token Generation
@@ -82,7 +83,7 @@ Set via Vercel dashboard or CLI:
 
 ```bash
 vercel env add DATABASE_URL production
-# Paste: postgresql://backchannel_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+# Paste: postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 
 vercel env add DATABASE_SCHEMA production
 # Enter: backchannel
@@ -95,7 +96,7 @@ vercel env add ADMIN_TOKEN_SHA256 production
 
 ```bash
 vercel env add DATABASE_URL preview
-# Paste: postgresql://backchannel_preview_runtime:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+# Paste: postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
 
 vercel env add DATABASE_SCHEMA preview
 # Enter: backchannel_preview
@@ -265,18 +266,18 @@ Paid tier (if needed):
 
 ### Preview vs Production Isolation
 
-- **Separate Supabase projects** (free tier: 2 projects)
+- **Separate schemas and roles in one Supabase project** (`backchannel` / `backchannel_preview`)
 - **Separate admin tokens** (rotate independently)
 - **Separate environment variables** in Vercel
-- **Separate migrations** (run on both databases)
+- **Separate migrations** (run once per schema with that schema's migration role)
 - **No shared data** (preview changes don't affect production)
 
 ### Branching Strategy
 
 Supabase branching is a **paid feature** (not available on free tier). For free tier:
 
-- Use 2 separate projects (prod + preview)
-- Previews get their own isolated database
+- Use schema isolation in one project (prod + preview schemas)
+- Previews get their own isolated schema and roles
 - No automatic preview database cleanup
 - Manual cleanup if needed
 
@@ -306,3 +307,15 @@ Supabase branching is a **paid feature** (not available on free tier). For free 
    ```bash
    curl https://your-app.vercel.app/healthz
    ```
+
+### Deployed configuration notes (verified 2026-10-07)
+
+- Pooler host is `aws-0-us-east-1.pooler.supabase.com:5432`; usernames use the `role.projectref` form
+  (e.g. `backchannel_runtime.arfxachrbugnvbneyboe`). `aws-1-...` rejects this project's tenant.
+- `vercel.json` uses the `@vercel/rust` builder for `api/backchannel/src/main.rs`; the function is served at
+  `/api/backchannel/src/main` and every path is routed there (the original path is preserved for axum).
+- Do not put `@secret` references in `vercel.json` `env`; Vercel secrets are retired. Set env vars on the project.
+- The migration roles only have `USAGE, CREATE` on their own schema; `backchannel-migrate` skips
+  `CREATE SCHEMA` when the schema already exists, so no database-level `CREATE` is required.
+- Tables are owned by the migration role, so runtime grants (and `ALTER DEFAULT PRIVILEGES`) must be run
+  as the migration role after migrating. See SUPABASE_SETUP.md section 5.

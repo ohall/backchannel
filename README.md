@@ -51,7 +51,7 @@ Each environment has dedicated roles (runtime and migration) with access only to
 
 ### 3. SSL Certificate Verification
 
-Supabase uses TLS with valid certificates from Let's Encrypt. The `sslmode=require` parameter enables certificate verification against the system CA bundle. No additional CA file is needed.
+Deployed connection strings must include `sslmode=require` (the code does not force TLS; it follows the URL). Note: with sqlx, `require` encrypts the connection but does **not** verify the server certificate. Full verification needs `sslmode=verify-full` plus Supabase's root CA (`sslrootcert=`), which is not configured in v1.
 
 ### Free Tier Limitations
 
@@ -150,12 +150,12 @@ Before deploying, run migrations for both environments (use migration roles):
 
 ```bash
 # Production
-export DATABASE_URL="postgresql://backchannel_migrate:password@..."
+export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:password@..."
 export DATABASE_SCHEMA="backchannel"
 cargo run --bin backchannel-migrate
 
 # Preview
-export DATABASE_URL="postgresql://backchannel_preview_migrate:password@..."
+export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:password@..."
 export DATABASE_SCHEMA="backchannel_preview"
 cargo run --bin backchannel-migrate
 ```

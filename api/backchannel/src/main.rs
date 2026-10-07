@@ -1,8 +1,8 @@
 use backchannel_core::{create_router, db, Config};
-use once_cell::sync::OnceCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::sync::OnceCell;
 use tower::Service;
 use tower::ServiceExt;
 use vercel_runtime::{run, AppState, Error, ResponseBody};
@@ -10,23 +10,27 @@ use vercel_runtime::{run, AppState, Error, ResponseBody};
 type Request = hyper::Request<hyper::body::Incoming>;
 type Response = hyper::Response<ResponseBody>;
 
-static ROUTER: OnceCell<axum::Router> = OnceCell::new();
+static ROUTER: OnceCell<axum::Router> = OnceCell::const_new();
 
-fn get_router() -> Result<&'static axum::Router, Error> {
-    ROUTER.get_or_try_init(|| {
-        let rt = tokio::runtime::Handle::current();
+/// Lazily build the router (and DB pool) on first request.
+///
+/// This must be async: the handler already runs inside the Tokio runtime, so
+/// blocking on a future here (e.g. `Handle::block_on`) would panic with
+/// "Cannot start a runtime from within a runtime". A failed init is not
+/// cached, so the next request retries (e.g. after a Supabase cold start).
+async fn get_router() -> Result<&'static axum::Router, Error> {
+    ROUTER
+        .get_or_try_init(|| async {
+            let config =
+                Config::from_env().map_err(|e| Error::from(format!("Config error: {}", e)))?;
 
-        let config = Config::from_env().map_err(|e| Error::from(format!("Config error: {}", e)))?;
+            let pool = db::create_pool(&config.database_url, &config.database_schema)
+                .await
+                .map_err(|e| Error::from(format!("Database connection error: {}", e)))?;
 
-        let pool = rt
-            .block_on(db::create_pool(
-                &config.database_url,
-                &config.database_schema,
-            ))
-            .map_err(|e| Error::from(format!("Database connection error: {}", e)))?;
-
-        Ok::<_, Error>(create_router(pool, config))
-    })
+            Ok::<_, Error>(create_router(pool, config))
+        })
+        .await
 }
 
 #[derive(Clone)]
@@ -43,7 +47,7 @@ impl Service<(AppState, Request)> for BackchannelService {
 
     fn call(&mut self, (_state, req): (AppState, Request)) -> Self::Future {
         Box::pin(async move {
-            let router = get_router()?;
+            let router = get_router().await?;
 
             let response = router
                 .clone()

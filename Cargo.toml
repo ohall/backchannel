@@ -7,6 +7,17 @@ members = [
     "api/backchannel",
 ]
 resolver = "2"
+# Include every member (and the root test package) so that commands run at the
+# workspace root, such as Vercel's `cargo build --bin backchannel`, can find
+# binaries in member crates.
+default-members = [
+    ".",
+    "crates/backchannel-core",
+    "crates/backchannel-server",
+    "crates/backchannel-migrate",
+    "crates/backchannel-admin",
+    "api/backchannel",
+]
 
 [workspace.package]
 version = "0.1.0"
