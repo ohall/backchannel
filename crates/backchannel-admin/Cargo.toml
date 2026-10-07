@@ -1,0 +1,20 @@
+[package]
+name = "backchannel-admin"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+backchannel-core = { path = "../backchannel-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+
+[[bin]]
+name = "backchannel-admin"
+path = "src/main.rs"

@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/backchannel/src/main.rs",
+      "use": "@vercel/rust"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/api/backchannel"
+    }
+  ],
+  "regions": ["iad1"],
+  "env": {
+    "DATABASE_URL": "@database_url",
+    "DATABASE_SCHEMA": "@database_schema",
+    "ADMIN_TOKEN_SHA256": "@admin_token_sha256"
+  }
+}
