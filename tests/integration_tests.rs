@@ -1317,9 +1317,11 @@ async fn test_mcp_dm_isolation() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    // Tool errors now return 200 with isError: true
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["isError"], true);
     // DM isolation returns "Conversation not found" to avoid leaking DM existence
-    assert!(body["error"]["message"]
+    assert!(body["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
         .contains("Conversation not found"));
@@ -1615,4 +1617,3 @@ async fn test_mcp_content_type_header() {
         .and_then(|v| v.to_str().ok());
     assert_eq!(content_type, Some("application/json"));
 }
-
