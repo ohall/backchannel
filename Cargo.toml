@@ -54,3 +54,19 @@ clap = { version = "4.5.23", features = ["derive"] }
 
 # UUID
 uuid = { version = "=1.11.0", features = ["v4", "serde"] }
+
+# Root package for workspace-level tests
+[package]
+name = "backchannel-workspace"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+backchannel-core = { path = "crates/backchannel-core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+futures = "0.3"
