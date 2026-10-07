@@ -101,6 +101,14 @@ impl IntoResponse for AppError {
 
         let mut response = (status, Json(error_response)).into_response();
 
+        // Add WWW-Authenticate header for 401 responses
+        if matches!(self, AppError::Unauthorized(_)) {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                "Bearer".parse().unwrap(),
+            );
+        }
+
         if let AppError::TooManyRequests {
             retry_after_seconds,
         } = self

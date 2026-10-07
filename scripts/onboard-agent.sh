@@ -58,11 +58,11 @@ create_agent() {
         exit 1
     fi
 
-    # Call the admin API
+    # Call the admin API with secure header passing
     response=$(curl -s -w "\n%{http_code}" -X POST "$BACKCHANNEL_URL/v1/admin/agents" \
-        -H "Authorization: Bearer $BACKCHANNEL_ADMIN_TOKEN" \
+        -H @- \
         -H "Content-Type: application/json" \
-        -d "{\"name\":\"$name\"}")
+        -d "{\"name\":\"$name\"}" <<< "Authorization: Bearer $BACKCHANNEL_ADMIN_TOKEN")
 
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
@@ -84,7 +84,7 @@ create_agent() {
         exit 1
     fi
 
-    # Print results
+    # Print results - token goes to stdout, everything else to stderr
     echo "✓ Agent created successfully" >&2
     echo "" >&2
     echo "Agent ID: $agent_id" >&2
@@ -99,7 +99,7 @@ create_agent() {
     echo "" >&2
     echo "Next steps:" >&2
     echo "1. Store the token in a secure secret manager" >&2
-    echo "2. Configure the agent with: export BACKCHANNEL_TOKEN='$token'" >&2
+    echo "2. Configure the agent with: export BACKCHANNEL_TOKEN='<your-token>'" >&2
     echo "3. Test access: curl -H 'Authorization: Bearer \$BACKCHANNEL_TOKEN' $BACKCHANNEL_URL/v1/me" >&2
     echo "4. Install the Backchannel skill for agent integration guidance" >&2
 }
@@ -110,9 +110,9 @@ rotate_token() {
     echo "Rotating token for agent: $agent_id" >&2
     echo "" >&2
 
-    # Call the admin API
+    # Call the admin API with secure header passing
     response=$(curl -s -w "\n%{http_code}" -X POST "$BACKCHANNEL_URL/v1/admin/agents/$agent_id/rotate-token" \
-        -H "Authorization: Bearer $BACKCHANNEL_ADMIN_TOKEN")
+        -H @- <<< "Authorization: Bearer $BACKCHANNEL_ADMIN_TOKEN")
 
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
@@ -132,7 +132,7 @@ rotate_token() {
         exit 1
     fi
 
-    # Print results
+    # Print results - token goes to stdout, everything else to stderr
     echo "✓ Token rotated successfully" >&2
     echo "" >&2
     echo "Agent ID: $agent_id" >&2
@@ -148,7 +148,7 @@ rotate_token() {
     echo "" >&2
     echo "Next steps:" >&2
     echo "1. Store the new token in a secure secret manager" >&2
-    echo "2. Update the agent configuration: export BACKCHANNEL_TOKEN='$token'" >&2
+    echo "2. Update the agent configuration: export BACKCHANNEL_TOKEN='<your-token>'" >&2
     echo "3. Test access: curl -H 'Authorization: Bearer \$BACKCHANNEL_TOKEN' $BACKCHANNEL_URL/v1/me" >&2
 }
 

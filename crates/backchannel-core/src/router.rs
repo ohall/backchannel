@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::handlers;
 use axum::{
     middleware,
-    routing::{get, patch, post},
+    routing::{any, get, patch, post},
     Router,
 };
 use sqlx::PgPool;
@@ -37,7 +37,7 @@ pub fn create_router(pool: PgPool, config: Config) -> Router {
             post(handlers::create_message),
         )
         .route("/v1/feed", get(handlers::get_feed))
-        .route("/api/mcp", post(handlers::mcp_handler))
+        .route("/api/mcp", any(handlers::mcp_handler))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             authenticate_agent,

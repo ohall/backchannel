@@ -1317,10 +1317,303 @@ async fn test_mcp_dm_isolation() {
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    // Tool errors now return 200 with isError: true
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["isError"], true);
     // DM isolation returns "Conversation not found" to avoid leaking DM existence
-    assert!(body["error"]["message"]
+    assert!(body["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
         .contains("Conversation not found"));
+}
+
+// New MCP compatibility tests
+
+#[tokio::test]
+async fn test_mcp_notifications() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "notif-tester").await;
+
+    // Test notification (no id field) - should get 202 Accepted
+    let (status, _body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn test_mcp_protocol_version_negotiation() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "version-tester").await;
+
+    // Test supported version 2025-03-26
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["protocolVersion"], "2025-03-26");
+
+    // Test supported version 2025-11-25
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+
+    // Test unsupported version - should negotiate to latest
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2099-01-01",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+}
+
+#[tokio::test]
+async fn test_mcp_tool_error_vs_protocol_error() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "error-tester").await;
+
+    // Test tool not found - should be isError result, not JSON-RPC error
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "nonexistent_tool",
+                "arguments": {}
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["result"].is_object());
+    assert_eq!(body["result"]["isError"], true);
+    assert!(body["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Unknown tool"));
+
+    // Test tool validation error - should be isError result
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "create_channel",
+                "arguments": {}  // Missing required 'name' field
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["result"].is_object());
+    assert_eq!(body["result"]["isError"], true);
+
+    // Test protocol error (unknown method) - should be JSON-RPC error
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "unknown/method"
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["error"].is_object());
+    assert_eq!(body["error"]["code"], -32601);
+}
+
+#[tokio::test]
+async fn test_mcp_get_and_ping() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "ping-tester").await;
+
+    // Test GET request - should return 405
+    let (status, body) = make_request(&router, "GET", "/api/mcp", Some(&token), None).await;
+
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert!(body["error"]
+        .as_str()
+        .unwrap()
+        .contains("Method not allowed"));
+
+    // Test ping
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ping"
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["result"].is_object());
+}
+
+#[tokio::test]
+async fn test_mcp_content_type_header() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "header-tester").await;
+
+    // Make a request and verify Content-Type header
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/mcp")
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "ping"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(content_type, Some("application/json"));
 }
