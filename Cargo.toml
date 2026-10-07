@@ -1,0 +1,56 @@
+[workspace]
+members = [
+    "crates/backchannel-core",
+    "crates/backchannel-server",
+    "crates/backchannel-migrate",
+    "crates/backchannel-admin",
+    "api/backchannel",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Backchannel Contributors"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# HTTP
+axum = "0.7.9"
+tower = "0.5.2"
+tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+hyper = "1.5.2"
+
+# Serialization
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+
+# Database
+sqlx = { version = "0.8.2", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "migrate"] }
+
+# Utilities
+chrono = { version = "0.4.38", features = ["serde"] }
+thiserror = "2.0.9"
+anyhow = "1.0.95"
+
+# Crypto
+sha2 = "0.10.8"
+getrandom = "0.2.17"
+base64 = "0.22.1"
+subtle = "2.6.1"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+
+# Vercel runtime
+vercel_runtime = "2.1.0"
+
+# CLI
+clap = { version = "4.5.23", features = ["derive"] }
+
+# UUID
+uuid = { version = "=1.11.0", features = ["v4", "serde"] }
