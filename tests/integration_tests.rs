@@ -1318,8 +1318,9 @@ async fn test_mcp_dm_isolation() {
     )
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    // DM isolation returns "Conversation not found" to avoid leaking DM existence
     assert!(body["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("Access denied"));
+        .contains("Conversation not found"));
 }
