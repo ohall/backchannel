@@ -931,3 +931,395 @@ async fn test_11_pg_dump_restore_isolation() {
         .await
         .unwrap();
 }
+
+// MCP endpoint tests
+
+#[tokio::test]
+async fn test_mcp_initialize() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "mcp-tester").await;
+
+    // Test initialize
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["id"], 1);
+    assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(body["result"]["serverInfo"]["name"], "backchannel");
+    assert!(body["result"]["capabilities"]["tools"].is_object());
+}
+
+#[tokio::test]
+async fn test_mcp_tools_list() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "mcp-tester").await;
+
+    // Test tools/list
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list"
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["id"], 2);
+    assert!(body["result"]["tools"].is_array());
+
+    let tools = body["result"]["tools"].as_array().unwrap();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+
+    assert!(tool_names.contains(&"whoami"));
+    assert!(tool_names.contains(&"list_channels"));
+    assert!(tool_names.contains(&"create_channel"));
+    assert!(tool_names.contains(&"post_message"));
+    assert!(tool_names.contains(&"reply"));
+    assert!(tool_names.contains(&"read_messages"));
+    assert!(tool_names.contains(&"open_dm"));
+    assert!(tool_names.contains(&"list_dms"));
+    assert!(tool_names.contains(&"feed"));
+}
+
+#[tokio::test]
+async fn test_mcp_whoami() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "alice").await;
+
+    // Test whoami tool
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "whoami",
+                "arguments": {}
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["id"], 3);
+    assert!(body["result"]["content"].is_array());
+
+    let content = &body["result"]["content"][0];
+    assert_eq!(content["type"], "text");
+
+    let text = content["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed["name"], "alice");
+    assert_eq!(parsed["enabled"], true);
+}
+
+#[tokio::test]
+async fn test_mcp_post_message_and_read() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_agent_id, token) = create_test_agent(&pool, "bob").await;
+
+    // Create a channel via REST
+    let (status, channel_body) = make_request(
+        &router,
+        "POST",
+        "/v1/channels",
+        Some(&token),
+        Some(json!({"name": "mcp-test", "description": "MCP test channel"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let conversation_id = channel_body["id"].as_str().unwrap();
+
+    // Post message via MCP
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "post_message",
+                "arguments": {
+                    "conversation_id": conversation_id,
+                    "body": "Hello from MCP!",
+                    "client_message_id": "mcp-msg-1"
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], "2.0");
+    let content = &body["result"]["content"][0];
+    let text = content["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed["body"], "Hello from MCP!");
+
+    // Read messages via MCP
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "read_messages",
+                "arguments": {
+                    "conversation_id": conversation_id,
+                    "after": "0",
+                    "limit": 10
+                }
+            }
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let content = &body["result"]["content"][0];
+    let text = content["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed["items"][0]["body"], "Hello from MCP!");
+}
+
+#[tokio::test]
+async fn test_mcp_auth_failure() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    // No token
+    let (status, _body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        None,
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Invalid token
+    let (status, _body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some("invalid-token"),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_mcp_dm_isolation() {
+    let pool = setup_test_db().await;
+    let config = Config {
+        database_schema: "backchannel_test".to_string(),
+        database_url: "unused".to_string(),
+        admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
+        default_rate_limit_per_minute: 120,
+        admin_rate_limit_per_minute: 300,
+        max_body_size_bytes: 64 * 1024,
+        max_message_body_size_bytes: 32 * 1024,
+    };
+    let router = create_router(pool.clone(), config);
+
+    let (_alice_id, alice_token) = create_test_agent(&pool, "alice").await;
+    let (bob_id, bob_token) = create_test_agent(&pool, "bob").await;
+    let (_charlie_id, charlie_token) = create_test_agent(&pool, "charlie").await;
+
+    // Alice opens DM with Bob
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&alice_token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "open_dm",
+                "arguments": {
+                    "recipient_agent_id": bob_id
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let content = &body["result"]["content"][0];
+    let text = content["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    let dm_id = parsed["id"].as_str().unwrap();
+
+    // Alice posts message
+    let (status, _) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&alice_token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "post_message",
+                "arguments": {
+                    "conversation_id": dm_id,
+                    "body": "Secret message",
+                    "client_message_id": "alice-dm-1"
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Bob can read
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&bob_token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "read_messages",
+                "arguments": {
+                    "conversation_id": dm_id
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let content = &body["result"]["content"][0];
+    let text = content["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parsed["items"][0]["body"], "Secret message");
+
+    // Charlie cannot read (should get error)
+    let (status, body) = make_request(
+        &router,
+        "POST",
+        "/api/mcp",
+        Some(&charlie_token),
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "read_messages",
+                "arguments": {
+                    "conversation_id": dm_id
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Access denied"));
+}
