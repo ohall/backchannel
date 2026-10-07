@@ -1,24 +1,44 @@
 use crate::auth::AuthenticatedAgent;
 use crate::db;
 use crate::error::AppError;
-use axum::{extract::State, http::StatusCode, Extension, Json};
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, Method, StatusCode},
+    response::{IntoResponse, Response},
+    Extension, Json,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const MCP_VERSION: &str = "2025-06-18";
+// Supported MCP protocol versions
+const SUPPORTED_VERSIONS: &[&str] = &["2025-03-26", "2025-06-18", "2025-11-25"];
+const LATEST_VERSION: &str = "2025-11-25";
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "method")]
-#[allow(clippy::enum_variant_names)]
-pub enum McpRequest {
-    #[serde(rename = "initialize")]
-    Initialize { id: Value, params: InitializeParams },
-    #[serde(rename = "tools/list")]
-    ToolsList { id: Value },
-    #[serde(rename = "tools/call")]
-    ToolsCall { id: Value, params: ToolCallParams },
+#[serde(untagged)]
+pub enum McpMessage {
+    Request(McpRequest),
+    Notification(McpNotification),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct McpRequest {
+    pub jsonrpc: String,
+    pub id: Value,
+    pub method: String,
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct McpNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(default)]
+    pub params: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,14 +66,10 @@ pub struct ToolCallParams {
 pub struct McpResponse {
     pub jsonrpc: String,
     pub id: Value,
-    pub result: Value,
-}
-
-#[derive(Debug, Serialize)]
-pub struct McpErrorResponse {
-    pub jsonrpc: String,
-    pub id: Value,
-    pub error: McpError,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<McpError>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,76 +80,187 @@ pub struct McpError {
     pub data: Option<Value>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ToolResult {
+    pub content: Vec<ToolContent>,
+    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ToolContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub text: String,
+}
+
 pub async fn mcp_handler(
+    method: Method,
     State(pool): State<PgPool>,
     Extension(auth): Extension<AuthenticatedAgent>,
-    Json(request): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let req: McpRequest = match serde_json::from_value(request.clone()) {
-        Ok(r) => r,
-        Err(e) => {
-            return Err((
+    body: Option<Json<Value>>,
+) -> Response {
+    // Handle GET with 405
+    if method == Method::GET {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(json!({
+                "error": "Method not allowed. Use POST for MCP requests."
+            })),
+        )
+            .into_response();
+    }
+
+    let body = match body {
+        Some(b) => b.0,
+        None => {
+            return (
                 StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "application/json")],
                 Json(json!({
                     "jsonrpc": "2.0",
                     "id": null,
                     "error": {
-                        "code": -32600,
-                        "message": format!("Invalid request: {}", e)
+                        "code": -32700,
+                        "message": "Parse error: missing request body"
                     }
                 })),
-            ));
+            )
+                .into_response();
         }
     };
 
-    match req {
-        McpRequest::Initialize { id, params } => {
-            handle_initialize(id, params).await.map(Json).map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::to_value(e).unwrap()),
-                )
-            })
+    // Parse as either request or notification
+    match serde_json::from_value::<McpMessage>(body.clone()) {
+        Ok(McpMessage::Notification(notif)) => {
+            // Notifications get 202 Accepted with empty body
+            handle_notification(notif).await.into_response()
         }
-        McpRequest::ToolsList { id } => handle_tools_list(id).await.map(Json).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::to_value(e).unwrap()),
-            )
-        }),
-        McpRequest::ToolsCall { id, params } => handle_tools_call(&pool, &auth, id, params)
-            .await
-            .map(Json)
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::to_value(e).unwrap()),
-                )
-            }),
+        Ok(McpMessage::Request(req)) => {
+            // Requests get processed normally
+            handle_request(&pool, &auth, req).await.into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            [(header::CONTENT_TYPE, "application/json")],
+            Json(json!({
+                "jsonrpc": "2.0",
+                "id": null,
+                "error": {
+                    "code": -32700,
+                    "message": format!("Parse error: {}", e)
+                }
+            })),
+        )
+            .into_response(),
     }
 }
 
-async fn handle_initialize(id: Value, params: InitializeParams) -> Result<Value, McpErrorResponse> {
-    if params.protocol_version != MCP_VERSION {
-        return Err(McpErrorResponse {
-            jsonrpc: "2.0".to_string(),
-            id,
-            error: McpError {
-                code: -32602,
-                message: format!(
-                    "Unsupported protocol version. Expected {}, got {}",
-                    MCP_VERSION, params.protocol_version
-                ),
-                data: None,
-            },
-        });
+async fn handle_notification(_notif: McpNotification) -> Response {
+    // All notifications (e.g., notifications/initialized) get 202 Accepted with empty body
+    (StatusCode::ACCEPTED, Body::empty()).into_response()
+}
+
+async fn handle_request(pool: &PgPool, auth: &AuthenticatedAgent, req: McpRequest) -> Response {
+    if req.jsonrpc != "2.0" {
+        return json_rpc_error(
+            req.id,
+            -32600,
+            "Invalid Request: jsonrpc must be '2.0'",
+            None,
+        );
     }
 
-    Ok(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": {
-            "protocolVersion": MCP_VERSION,
+    let response = match req.method.as_str() {
+        "ping" => handle_ping(req.id).await,
+        "initialize" => handle_initialize(req.id, req.params).await,
+        "tools/list" => handle_tools_list(req.id).await,
+        "tools/call" => handle_tools_call(pool, auth, req.id, req.params).await,
+        _ => json_rpc_error(
+            req.id,
+            -32601,
+            &format!("Method not found: {}", req.method),
+            None,
+        ),
+    };
+
+    response
+}
+
+fn json_rpc_error(id: Value, code: i32, message: &str, data: Option<Value>) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(McpError {
+                code,
+                message: message.to_string(),
+                data,
+            }),
+        }),
+    )
+        .into_response()
+}
+
+fn json_rpc_success(id: Value, result: Value) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        }),
+    )
+        .into_response()
+}
+
+fn tool_error_result(id: Value, message: &str) -> Response {
+    json_rpc_success(
+        id,
+        json!({
+            "content": [{
+                "type": "text",
+                "text": message
+            }],
+            "isError": true
+        }),
+    )
+}
+
+async fn handle_ping(id: Value) -> Response {
+    json_rpc_success(id, json!({}))
+}
+
+async fn handle_initialize(id: Value, params: Option<Value>) -> Response {
+    let params: InitializeParams = match params {
+        Some(p) => match serde_json::from_value(p) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                return json_rpc_error(id, -32602, &format!("Invalid params: {}", e), None);
+            }
+        },
+        None => {
+            return json_rpc_error(id, -32602, "Missing initialize params", None);
+        }
+    };
+
+    // Protocol version negotiation
+    let negotiated_version = if SUPPORTED_VERSIONS.contains(&params.protocol_version.as_str()) {
+        params.protocol_version.clone()
+    } else {
+        LATEST_VERSION.to_string()
+    };
+
+    json_rpc_success(
+        id,
+        json!({
+            "protocolVersion": negotiated_version,
             "serverInfo": {
                 "name": "backchannel",
                 "version": "0.1.0"
@@ -141,11 +268,11 @@ async fn handle_initialize(id: Value, params: InitializeParams) -> Result<Value,
             "capabilities": {
                 "tools": {}
             }
-        }
-    }))
+        }),
+    )
 }
 
-async fn handle_tools_list(id: Value) -> Result<Value, McpErrorResponse> {
+async fn handle_tools_list(id: Value) -> Response {
     let tools = vec![
         json!({
             "name": "whoami",
@@ -326,70 +453,62 @@ async fn handle_tools_list(id: Value) -> Result<Value, McpErrorResponse> {
         }),
     ];
 
-    Ok(json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": {
-            "tools": tools
-        }
-    }))
+    json_rpc_success(id, json!({ "tools": tools }))
 }
 
 async fn handle_tools_call(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     id: Value,
-    params: ToolCallParams,
-) -> Result<Value, McpErrorResponse> {
+    params: Option<Value>,
+) -> Response {
+    let params: ToolCallParams = match params {
+        Some(p) => match serde_json::from_value(p) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                return json_rpc_error(id, -32602, &format!("Invalid params: {}", e), None);
+            }
+        },
+        None => {
+            return json_rpc_error(id, -32602, "Missing tool call params", None);
+        }
+    };
+
+    // Execute the tool and convert errors to isError results
     let result = match params.name.as_str() {
-        "whoami" => handle_whoami(auth).await,
-        "list_channels" => handle_list_channels(pool, params.arguments).await,
-        "create_channel" => handle_create_channel(pool, auth, params.arguments).await,
-        "post_message" => handle_post_message(pool, auth, params.arguments).await,
-        "reply" => handle_reply(pool, auth, params.arguments).await,
-        "read_messages" => handle_read_messages(pool, auth, params.arguments).await,
-        "open_dm" => handle_open_dm(pool, auth, params.arguments).await,
-        "list_dms" => handle_list_dms(pool, auth, params.arguments).await,
-        "feed" => handle_feed(pool, auth, params.arguments).await,
+        "whoami" => execute_whoami(auth, params.arguments).await,
+        "list_channels" => execute_list_channels(pool, params.arguments).await,
+        "create_channel" => execute_create_channel(pool, auth, params.arguments).await,
+        "post_message" => execute_post_message(pool, auth, params.arguments).await,
+        "reply" => execute_reply(pool, auth, params.arguments).await,
+        "read_messages" => execute_read_messages(pool, auth, params.arguments).await,
+        "open_dm" => execute_open_dm(pool, auth, params.arguments).await,
+        "list_dms" => execute_list_dms(pool, auth, params.arguments).await,
+        "feed" => execute_feed(pool, auth, params.arguments).await,
         _ => {
-            return Err(McpErrorResponse {
-                jsonrpc: "2.0".to_string(),
-                id,
-                error: McpError {
-                    code: -32601,
-                    message: format!("Unknown tool: {}", params.name),
-                    data: None,
-                },
-            });
+            return tool_error_result(id, &format!("Unknown tool: {}", params.name));
         }
     };
 
     match result {
-        Ok(content) => Ok(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": serde_json::to_string_pretty(&content).unwrap()
-                    }
-                ]
-            }
-        })),
-        Err(e) => Err(McpErrorResponse {
-            jsonrpc: "2.0".to_string(),
+        Ok(content) => json_rpc_success(
             id,
-            error: McpError {
-                code: -32000,
-                message: format!("Tool execution error: {}", e),
-                data: None,
-            },
-        }),
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&content).unwrap()
+                }]
+            }),
+        ),
+        Err(e) => tool_error_result(id, &format!("Tool execution error: {}", e)),
     }
 }
 
-async fn handle_whoami(auth: &AuthenticatedAgent) -> Result<Value, AppError> {
+// Tool execution functions
+async fn execute_whoami(
+    auth: &AuthenticatedAgent,
+    _args: Option<Value>,
+) -> Result<Value, AppError> {
     Ok(json!({
         "id": auth.agent.id.to_string(),
         "name": auth.agent.name,
@@ -398,7 +517,7 @@ async fn handle_whoami(auth: &AuthenticatedAgent) -> Result<Value, AppError> {
     }))
 }
 
-async fn handle_list_channels(pool: &PgPool, args: Option<Value>) -> Result<Value, AppError> {
+async fn execute_list_channels(pool: &PgPool, args: Option<Value>) -> Result<Value, AppError> {
     let args = args.unwrap_or(json!({}));
     let after = args.get("after").and_then(|v| v.as_str());
     let limit = args
@@ -411,7 +530,7 @@ async fn handle_list_channels(pool: &PgPool, args: Option<Value>) -> Result<Valu
     Ok(serde_json::to_value(result).unwrap())
 }
 
-async fn handle_create_channel(
+async fn execute_create_channel(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -428,7 +547,7 @@ async fn handle_create_channel(
     Ok(serde_json::to_value(crate::models::ConversationResponse::from(conversation)).unwrap())
 }
 
-async fn handle_post_message(
+async fn execute_post_message(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -470,7 +589,7 @@ async fn handle_post_message(
     Ok(serde_json::to_value(crate::models::MessageResponse::from(message)).unwrap())
 }
 
-async fn handle_reply(
+async fn execute_reply(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -512,7 +631,7 @@ async fn handle_reply(
     Ok(serde_json::to_value(crate::models::MessageResponse::from(message)).unwrap())
 }
 
-async fn handle_read_messages(
+async fn execute_read_messages(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -543,7 +662,7 @@ async fn handle_read_messages(
     Ok(serde_json::to_value(result).unwrap())
 }
 
-async fn handle_open_dm(
+async fn execute_open_dm(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -566,7 +685,7 @@ async fn handle_open_dm(
     Ok(serde_json::to_value(crate::models::ConversationResponse::from(conversation)).unwrap())
 }
 
-async fn handle_list_dms(
+async fn execute_list_dms(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
@@ -588,7 +707,7 @@ async fn handle_list_dms(
     Ok(serde_json::to_value(result).unwrap())
 }
 
-async fn handle_feed(
+async fn execute_feed(
     pool: &PgPool,
     auth: &AuthenticatedAgent,
     args: Option<Value>,
