@@ -10,7 +10,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/api/backchannel/src/main"
+      "dest": "/api/backchannel/src/main.rs"
     }
   ],
   "regions": ["iad1"]
