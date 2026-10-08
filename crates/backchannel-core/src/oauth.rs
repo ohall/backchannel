@@ -33,6 +33,10 @@ pub struct OAuthConfig {
     pub issuer: String,
     pub jwks_uri: String,
     pub resource: String,
+    /// Opt in to Auth0's exact API + issuer /userinfo audience pair for OIDC.
+    /// Never permits another API audience or removes the required MCP audience.
+    #[serde(default)]
+    pub allow_oidc_userinfo_audience: bool,
     pub bindings: Vec<IdentityBinding>,
 }
 
@@ -57,6 +61,9 @@ impl OAuthConfig {
         let issuer = secure_url(&self.issuer)?;
         let jwks = secure_url(&self.jwks_uri)?;
         let resource = secure_url(&self.resource)?;
+        if self.allow_oidc_userinfo_audience && issuer.path() != "/" {
+            return Err("OIDC UserInfo audience compatibility requires a root-path issuer".into());
+        }
         if issuer.origin() != jwks.origin() {
             return Err("OAuth JWKS must use the configured issuer's HTTPS origin".into());
         }
@@ -231,9 +238,10 @@ impl OAuthVerifier {
         {
             return Err(OAuthFailure::InvalidToken);
         }
-        // Reject multi-resource credentials as well as tokens for a different API.
-        let audience_matches = claims.aud == json!(self.config.resource)
-            || claims.aud == json!([self.config.resource]);
+        // Default: one exact resource. Opt-in OIDC compatibility accepts only
+        // that resource plus this trusted issuer's exact /userinfo audience.
+        // This is not an arbitrary extra-audience allowlist.
+        let audience_matches = self.audience_matches(&claims);
         if !audience_matches {
             return Err(OAuthFailure::InvalidToken);
         }
@@ -255,6 +263,28 @@ impl OAuthVerifier {
             return Err(OAuthFailure::InsufficientScope);
         }
         Ok(identity.agent_id)
+    }
+
+    fn audience_matches(&self, claims: &AccessClaims) -> bool {
+        if claims.aud == json!(self.config.resource) || claims.aud == json!([self.config.resource])
+        {
+            return true;
+        }
+        if !self.config.allow_oidc_userinfo_audience
+            || !claims.scope.split(' ').any(|scope| scope == "openid")
+        {
+            return false;
+        }
+        let Some(audiences) = claims.aud.as_array() else {
+            return false;
+        };
+        let Ok(mut userinfo) = Url::parse(&self.config.issuer) else {
+            return false;
+        };
+        userinfo.set_path("/userinfo");
+        audiences.len() == 2
+            && audiences.contains(&json!(self.config.resource))
+            && audiences.contains(&json!(userinfo.as_str()))
     }
 
     async fn key(&self, kid: &str) -> Result<DecodingKey, OAuthFailure> {
@@ -403,6 +433,7 @@ mod tests {
             issuer: "https://id.example/".into(),
             jwks_uri: "https://id.example/jwks".into(),
             resource: "https://backchannel.example/api/mcp".into(),
+            allow_oidc_userinfo_audience: false,
             bindings: vec![IdentityBinding {
                 subject: "human-subject".into(),
                 client_id: "chatgpt-client".into(),
@@ -450,6 +481,101 @@ mod tests {
         value.aud = json!([config().resource]);
         assert_eq!(check(&value), Ok(Uuid::from_u128(1)));
     }
+    #[test]
+    fn oidc_userinfo_audience_is_explicit_and_narrow() {
+        let mut cfg = config();
+        cfg.allow_oidc_userinfo_audience = true;
+        let verifier = OAuthVerifier::new(cfg).unwrap();
+        let key =
+            DecodingKey::from_rsa_pem(include_bytes!("../tests/fixtures/oauth-test-public.pem"))
+                .unwrap();
+        let mut value = claims();
+        value.scope = format!("openid profile email {SCOPE}");
+        for audience in [
+            json!([config().resource, "https://id.example/userinfo"]),
+            json!(["https://id.example/userinfo", config().resource]),
+        ] {
+            value.aud = audience;
+            assert_eq!(check(&value), Err(OAuthFailure::InvalidToken));
+            assert_eq!(
+                verifier.verify_with_key(&token(&value), &key),
+                Ok(Uuid::from_u128(1))
+            );
+        }
+        for audience in [
+            json!("https://id.example/userinfo"),
+            json!(["https://id.example/userinfo"]),
+            json!([config().resource, config().resource]),
+            json!([
+                config().resource,
+                "https://id.example/userinfo",
+                "third-api"
+            ]),
+            json!([config().resource, "https://other.example/userinfo"]),
+            json!([config().resource, "https://id.example/other-api"]),
+            json!([config().resource, "https://id.example/userinfo/"]),
+            json!([config().resource, "http://id.example/userinfo"]),
+            json!([config().resource, 1]),
+            json!([]),
+        ] {
+            value.aud = audience;
+            assert_eq!(
+                verifier.verify_with_key(&token(&value), &key),
+                Err(OAuthFailure::InvalidToken)
+            );
+        }
+        value.aud = json!([config().resource, "https://id.example/userinfo"]);
+        for scope in [
+            SCOPE.to_string(),
+            format!("openid-extra {SCOPE}"),
+            format!("openid\t{SCOPE}"),
+        ] {
+            value.scope = scope;
+            assert_eq!(
+                verifier.verify_with_key(&token(&value), &key),
+                Err(OAuthFailure::InvalidToken)
+            );
+        }
+        value.scope = "openid".into();
+        assert_eq!(
+            verifier.verify_with_key(&token(&value), &key),
+            Err(OAuthFailure::InsufficientScope)
+        );
+        value.scope = format!("openid {SCOPE}");
+        value.client_id = "wrong-client".into();
+        assert_eq!(
+            verifier.verify_with_key(&token(&value), &key),
+            Err(OAuthFailure::InvalidToken)
+        );
+        value.client_id = "chatgpt-client".into();
+        value.sub = "wrong-user".into();
+        assert_eq!(
+            verifier.verify_with_key(&token(&value), &key),
+            Err(OAuthFailure::InvalidToken)
+        );
+    }
+
+    #[test]
+    fn oidc_userinfo_configuration_defaults_off_and_rejects_path_issuers() {
+        let input = json!({
+            "issuer": "https://id.example/", "jwks_uri": "https://id.example/jwks",
+            "resource": config().resource,
+            "bindings": [{"subject": "human-subject", "client_id": "chatgpt-client",
+                          "agent_id": Uuid::from_u128(1)}]
+        });
+        assert!(
+            !OAuthConfig::from_json(&input.to_string())
+                .unwrap()
+                .allow_oidc_userinfo_audience
+        );
+        let mut cfg = config();
+        cfg.allow_oidc_userinfo_audience = true;
+        cfg.issuer = "https://id.example/tenant/".into();
+        assert!(cfg.validate().is_err());
+        cfg.allow_oidc_userinfo_audience = false;
+        assert!(cfg.validate().is_ok());
+    }
+
     #[test]
     fn rejects_bad_claims_and_unmapped_identity() {
         for mutate in [
@@ -555,6 +681,33 @@ mod tests {
             attempted_at: Some(Instant::now()),
         };
         verifier
+    }
+
+    #[tokio::test]
+    async fn verifies_oidc_pair_through_public_verifier() {
+        let mut verifier = cached_verifier().await;
+        let mut cfg = config();
+        cfg.allow_oidc_userinfo_audience = true;
+        verifier.config = Arc::new(cfg);
+        let mut value = claims();
+        for audience in [json!(config().resource), json!([config().resource])] {
+            value.aud = audience;
+            assert_eq!(
+                verifier.verify(&token(&value)).await,
+                Ok(Uuid::from_u128(1))
+            );
+        }
+        value.aud = json!([config().resource, "https://id.example/userinfo"]);
+        value.scope = format!("openid {SCOPE}");
+        assert_eq!(
+            verifier.verify(&token(&value)).await,
+            Ok(Uuid::from_u128(1))
+        );
+        value.aud = json!(["other-resource", "https://id.example/userinfo"]);
+        assert_eq!(
+            verifier.verify(&token(&value)).await,
+            Err(OAuthFailure::InvalidToken)
+        );
     }
 
     #[tokio::test]
@@ -732,6 +885,7 @@ mod tests {
         let mut verifier = cached_verifier().await;
         let mut cfg = config();
         cfg.bindings[0].agent_id = agent.id;
+        cfg.allow_oidc_userinfo_audience = true;
         verifier.config = Arc::new(cfg.clone());
         let router = crate::router::create_router_with_verifier(
             pool.clone(),
@@ -739,6 +893,10 @@ mod tests {
             Some(verifier),
         );
         let jwt = token(&claims());
+        let mut oidc_claims = claims();
+        oidc_claims.aud = json!([config().resource, "https://id.example/userinfo"]);
+        oidc_claims.scope = format!("openid {SCOPE}");
+        let oidc_jwt = token(&oidc_claims);
         async fn call(
             router: &axum::Router,
             token: &str,
@@ -766,7 +924,7 @@ mod tests {
             (status, value)
         }
         let rpc = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#;
-        for credential in [&jwt, &legacy] {
+        for credential in [&jwt, &oidc_jwt, &legacy] {
             let (status, value) = call(&router, credential, "/api/mcp", "POST", rpc).await;
             assert_eq!(status, StatusCode::OK);
             let identity: Value =
@@ -787,6 +945,16 @@ mod tests {
         assert_eq!(
             call(&router, &legacy, "/v1/me", "GET", "").await.0,
             StatusCode::OK
+        );
+        assert_eq!(
+            call(&router, &oidc_jwt, "/v1/me", "GET", "").await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(&router, &oidc_jwt, "/v1/admin/agents", "POST", "{}")
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
         );
         let (_, value) = call(
             &router,
@@ -822,6 +990,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        assert_eq!(
+            call(&router, &oidc_jwt, "/api/mcp", "POST", rpc).await.0,
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(
             call(&router, &jwt, "/api/mcp", "POST", rpc).await.0,
             StatusCode::UNAUTHORIZED

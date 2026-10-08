@@ -57,13 +57,25 @@ Backchannel deliberately accepts a narrow [RFC 9068 JWT access-token profile](ht
 - A signed JWT with header `alg: "RS256"`, `typ: "at+jwt"` (or `"application/at+jwt"`), and a nonempty `kid` matching a trusted RSA signing key
 - Required claims: `iss`, `aud`, `sub`, `client_id`, `exp`, `iat`, `jti`, and string-valued `scope`
 - Exact configured issuer
-- Audience equal to the canonical MCP resource, either as a string or as a one-element array containing that string
+- Audience equal to the canonical MCP resource, either as a string or as a one-element array containing that string; the explicit OIDC compatibility option below permits one narrowly defined companion audience
 - Nonempty immutable subject, exact OAuth client ID, and nonempty token ID
 - `exp` later than `iat`, with `exp - iat` no greater than 900 seconds
 - An unexpired token; `nbf` is enforced when present
 - Scope containing the exact space-delimited permission `backchannel:access`
 
-Provider defaults may be incompatible. Tokens with `typ: "JWT"`, an `azp` claim instead of `client_id`, a `permissions` array instead of `scope`, multiple audiences, ES256 signatures, opaque tokens, or a lifetime above 900 seconds do not satisfy this contract. Both registered access-token type spellings (`at+jwt` and `application/at+jwt`) are accepted. Configure a compatible profile rather than weakening audience or identity checks to make a default token pass. ID tokens are not access tokens.
+Provider defaults may be incompatible. Tokens with `typ: "JWT"`, an `azp` claim instead of `client_id`, a `permissions` array instead of `scope`, unapproved additional audiences, ES256 signatures, opaque tokens, or a lifetime above 900 seconds do not satisfy this contract. Both registered access-token type spellings (`at+jwt` and `application/at+jwt`) are accepted. Configure a compatible profile rather than weakening identity checks to make a default token pass. ID tokens are not access tokens.
+
+### Auth0 and ChatGPT OIDC compatibility
+
+[ChatGPT requests advertised OIDC scopes by default](https://developers.openai.com/plugins/build/auth#oidc-scopes). When `openid` is requested for an Auth0 custom API, [Auth0 includes both that API and its UserInfo endpoint in the audience](https://auth0.com/docs/secure/tokens/access-tokens/get-access-tokens#multiple-audiences). Consequently, simply asking the operator to omit `openid` is not a reliable ChatGPT setup strategy.
+
+For this documented profile, set `allow_oidc_userinfo_audience: true` in the approved `OAUTH_CONFIG`. It defaults to `false`, preserving existing behavior. With it enabled, a signed token may have exactly two distinct audiences, in either order: the configured MCP resource and the configured issuer's HTTPS origin followed by `/userinfo`. The token must contain the exact `openid` scope as well as `backchannel:access`. Root-path issuers only are supported for this option. UserInfo-only tokens, foreign or alternate UserInfo paths, duplicate audiences and third audiences remain rejected. Signature, access-token type, issuer, client, subject, time limits and agent permissions are still checked. Backchannel never forwards the token to UserInfo.
+
+Use Auth0's **RFC 9068** profile with **RS256**, API identifier equal to the MCP resource, access-token lifetime at most 900 seconds, and `backchannel:access` permission. Enable offline access and rotating refresh tokens with reuse detection if persistent linking is needed. Verify that the actual `scope` claim contains the permission, especially when RBAC is enabled. Auth0's [resource-parameter compatibility guide](https://auth0.com/ai/docs/mcp/guides/resource-param-compatibility-profile) documents the tenant-level Resource Parameter Compatibility Profile and Include Issuer in Authorization Responses toggles. Review their effect on other tenant applications before changing them.
+
+The Auth0 dashboard account is not automatically an end-user account in the tenant. Bind the verified tenant end-user's immutable `user_id`, not the dashboard login, email address or display name. Keep the existing explicit client and agent mapping.
+
+Use the assigned canonical Auth0 tenant domain consistently for issuer, authorization, token and JWKS endpoints. Auth0 custom-domain flows can retain the tenant-domain UserInfo audience; this cross-origin companion audience is intentionally unsupported by this option. Do not enable a custom domain or broaden audience matching to work around it.
 
 The JWKS must be available over HTTPS on the same origin as `issuer`, meaning the same scheme, host, and effective port. URLs cannot contain credentials, a query, or a fragment. Cross-origin signing-key services and redirecting JWKS URLs are unsupported by this implementation. Choose the provider's final compatible endpoint; do not follow a URL supplied inside an incoming token.
 
@@ -99,6 +111,7 @@ Set `OAUTH_CONFIG` to a JSON object with this structure. These values are illust
   "issuer": "https://identity.example.com/",
   "jwks_uri": "https://identity.example.com/.well-known/jwks.json",
   "resource": "https://backchannel-azure.vercel.app/api/mcp",
+  "allow_oidc_userinfo_audience": false,
   "bindings": [
     {
       "subject": "immutable-provider-subject",
@@ -166,7 +179,9 @@ The following table describes required checks, not test results. Record passed, 
 | Valid RS256 access token and approved binding | `whoami` returns the intended enabled agent |
 | Wrong signature, algorithm, `typ`, issuer, or audience | Rejected |
 | Missing required claim, empty `jti`, expired token, future `nbf`, lifetime above 900 seconds | Rejected |
-| Extra audience alongside the expected audience | Rejected |
+| Extra audience alongside the expected audience, compatibility option absent/false | Rejected |
+| Compatibility enabled: exactly MCP + trusted issuer `/userinfo`, with `openid` | Accepted only if all remaining checks pass |
+| Compatibility enabled: UserInfo-only, duplicate/third/foreign audience, missing `openid` | Rejected |
 | Unknown subject/client pair | Rejected without auto-provisioning |
 | Valid bound identity without `backchannel:access` | 403 with `insufficient_scope` |
 | Bound agent missing or disabled | Rejected |
