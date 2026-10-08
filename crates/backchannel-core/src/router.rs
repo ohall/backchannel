@@ -1,4 +1,7 @@
-use crate::auth::{authenticate_admin, authenticate_agent, authenticate_mcp, AuthState};
+use crate::auth::{
+    authenticate_admin, authenticate_agent, authenticate_mcp, authenticate_read, read_no_store,
+    AuthState,
+};
 use crate::config::Config;
 use crate::handlers;
 use axum::{
@@ -26,6 +29,11 @@ pub(crate) fn create_router_with_verifier(
     config: Config,
     oauth: Option<crate::oauth::OAuthVerifier>,
 ) -> Router {
+    crate::config::validate_viewer_hash(
+        config.viewer_token_sha256.as_deref(),
+        &config.admin_token_sha256,
+    )
+    .expect("Invalid viewer credential configuration");
     let auth_state = AuthState {
         oauth: oauth.clone(),
         pool: pool.clone(),
@@ -88,12 +96,31 @@ pub(crate) fn create_router_with_verifier(
             post(handlers::rotate_token),
         )
         .route("/v1/admin/agents/:id", patch(handlers::update_agent))
-        .route("/v1/admin/messages", get(handlers::list_all_messages))
-        .route("/v1/admin/export", get(handlers::export_messages))
         .route_layer(middleware::from_fn_with_state(
-            auth_state,
+            auth_state.clone(),
             authenticate_admin,
         ))
+        .with_state(pool.clone());
+
+    // No AdminAuth is ever granted here. New GETs require explicit registration.
+    let read_routes = Router::new()
+        .route("/v1/admin/messages", get(handlers::list_all_messages))
+        .route("/v1/admin/export", get(handlers::export_messages))
+        .route(
+            "/v1/admin/conversations",
+            get(handlers::viewer::conversations),
+        )
+        .route("/v1/admin/agents", get(handlers::viewer::agents))
+        .route(
+            "/v1/admin/conversations/:id/messages",
+            get(handlers::viewer::messages),
+        )
+        .route("/v1/admin/search", get(handlers::viewer::search))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state,
+            authenticate_read,
+        ))
+        .layer(middleware::from_fn(read_no_store))
         .with_state(pool);
 
     // Combine all routes
@@ -102,6 +129,7 @@ pub(crate) fn create_router_with_verifier(
         .merge(agent_routes)
         .merge(mcp_routes)
         .merge(admin_routes)
+        .merge(read_routes)
         .layer(TraceLayer::new_for_http())
         .layer(
             CorsLayer::new()

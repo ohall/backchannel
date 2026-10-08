@@ -33,3 +33,11 @@ backup-key.txt
 # Test artifacts
 *.prof
 *.profraw
+
+# Viewer build and test artifacts
+/web/node_modules/
+/web/.next/
+/web/coverage/
+/web/test-results/
+/web/playwright-report/
+/web/*.tsbuildinfo

@@ -801,6 +801,7 @@ mod tests {
             oauth,
             database_url: "unused".into(),
             database_schema: "backchannel_test".into(),
+            viewer_token_sha256: None,
             admin_token_sha256: crate::token::hash_token("test-admin"),
             default_rate_limit_per_minute: 1000,
             admin_rate_limit_per_minute: 1000,
