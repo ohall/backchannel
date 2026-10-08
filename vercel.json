@@ -19,7 +19,8 @@
   "git": {
     "deploymentEnabled": {
       "feat/mcp-oauth": false,
-      "feat/grumpy-oauth-handoff": false
+      "feat/grumpy-oauth-handoff": false,
+      "feat/readonly-viewer": false
     }
   }
 }
