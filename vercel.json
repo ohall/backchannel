@@ -13,5 +13,12 @@
       "dest": "/api/backchannel/src/main.rs"
     }
   ],
-  "regions": ["iad1"]
+  "regions": [
+    "iad1"
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "feat/mcp-oauth": false
+    }
+  }
 }

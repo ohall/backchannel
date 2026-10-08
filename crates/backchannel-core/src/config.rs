@@ -2,6 +2,7 @@ use std::env;
 
 #[derive(Clone)]
 pub struct Config {
+    pub oauth: Option<crate::oauth::OAuthConfig>,
     pub database_url: String,
     pub database_schema: String,
     pub admin_token_sha256: String,
@@ -14,6 +15,11 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         Ok(Config {
+            oauth: match env::var("OAUTH_CONFIG") {
+                Ok(value) => Some(crate::oauth::OAuthConfig::from_json(&value)?),
+                Err(env::VarError::NotPresent) => None,
+                Err(_) => return Err("OAUTH_CONFIG must be valid Unicode".into()),
+            },
             database_url: env::var("DATABASE_URL")
                 .map_err(|_| "DATABASE_URL environment variable required".to_string())?,
             database_schema: env::var("DATABASE_SCHEMA")

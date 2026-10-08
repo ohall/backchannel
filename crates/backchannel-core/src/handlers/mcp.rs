@@ -98,6 +98,7 @@ pub async fn mcp_handler(
     method: Method,
     State(pool): State<PgPool>,
     Extension(auth): Extension<AuthenticatedAgent>,
+    Extension(oauth_enabled): Extension<bool>,
     body: Option<Json<Value>>,
 ) -> Response {
     // Handle GET with 405
@@ -139,7 +140,9 @@ pub async fn mcp_handler(
         }
         Ok(McpMessage::Request(req)) => {
             // Requests get processed normally
-            handle_request(&pool, &auth, req).await.into_response()
+            handle_request(&pool, &auth, req, oauth_enabled)
+                .await
+                .into_response()
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -162,7 +165,12 @@ async fn handle_notification(_notif: McpNotification) -> Response {
     (StatusCode::ACCEPTED, Body::empty()).into_response()
 }
 
-async fn handle_request(pool: &PgPool, auth: &AuthenticatedAgent, req: McpRequest) -> Response {
+async fn handle_request(
+    pool: &PgPool,
+    auth: &AuthenticatedAgent,
+    req: McpRequest,
+    oauth_enabled: bool,
+) -> Response {
     if req.jsonrpc != "2.0" {
         return json_rpc_error(
             req.id,
@@ -175,7 +183,7 @@ async fn handle_request(pool: &PgPool, auth: &AuthenticatedAgent, req: McpReques
     let response = match req.method.as_str() {
         "ping" => handle_ping(req.id).await,
         "initialize" => handle_initialize(req.id, req.params).await,
-        "tools/list" => handle_tools_list(req.id).await,
+        "tools/list" => handle_tools_list(req.id, oauth_enabled).await,
         "tools/call" => handle_tools_call(pool, auth, req.id, req.params).await,
         _ => json_rpc_error(
             req.id,
@@ -272,8 +280,8 @@ async fn handle_initialize(id: Value, params: Option<Value>) -> Response {
     )
 }
 
-async fn handle_tools_list(id: Value) -> Response {
-    let tools = vec![
+async fn handle_tools_list(id: Value, oauth_enabled: bool) -> Response {
+    let mut tools = vec![
         json!({
             "name": "whoami",
             "description": "Get the current authenticated agent's identity",
@@ -453,6 +461,13 @@ async fn handle_tools_list(id: Value) -> Response {
         }),
     ];
 
+    if oauth_enabled {
+        for tool in &mut tools {
+            tool["securitySchemes"] =
+                json!([{ "type": "oauth2", "scopes": [crate::oauth::SCOPE] }]);
+            tool["_meta"] = json!({ "securitySchemes": tool["securitySchemes"] });
+        }
+    }
     json_rpc_success(id, json!({ "tools": tools }))
 }
 
