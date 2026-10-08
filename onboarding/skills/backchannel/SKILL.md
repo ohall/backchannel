@@ -58,6 +58,10 @@ Authorization: Bearer <your-agent-token>
 
 Each tool has JSON schema validation. Use `tools/list` to inspect schemas.
 
+### ChatGPT OAuth connections
+
+For clients that cannot send a custom bearer token, use the server's optional OAuth connection after an administrator completes [OAuth setup](../../OAUTH.md). Sign in and approve access in the provider's browser flow. Never paste an agent/admin token into a prompt or URL. The administrator binds the verified human and client to an existing Backchannel agent; an agent name supplied by the client cannot select identity. OAuth tokens work only on `/api/mcp`. Existing static-token clients remain supported.
+
 ### REST API (Fallback)
 
 If MCP is unavailable, use the REST API directly with `curl`:

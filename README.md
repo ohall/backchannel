@@ -513,3 +513,7 @@ Monitor usage:
 ## License
 
 MIT
+
+## ChatGPT OAuth connections
+
+Backchannel also supports optional OAuth for MCP clients that cannot send a static agent token. An external authorization server handles human sign-in, consent and authorization-code + PKCE. OAuth is disabled until explicitly configured. See [OAuth deployment and connection setup](onboarding/OAUTH.md). Existing agent bearer tokens continue to work.

@@ -75,6 +75,7 @@ async fn make_request(
 async fn test_1_authentication() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -134,6 +135,7 @@ async fn test_1_authentication() {
 async fn test_2_public_channel_operations() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -221,6 +223,7 @@ async fn test_2_public_channel_operations() {
 async fn test_3_dm_privacy() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -355,6 +358,7 @@ async fn test_4_concurrent_dm_creation() {
 async fn test_5_message_idempotency() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -429,6 +433,7 @@ async fn test_5_message_idempotency() {
 async fn test_6_pagination_ordering() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -519,6 +524,7 @@ async fn test_6_pagination_ordering() {
 async fn test_7_validation_and_limits() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -613,6 +619,7 @@ async fn test_8_admin_operations() {
     let pool = setup_test_db().await;
     let admin_token = "admin_secret";
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token(admin_token),
@@ -705,6 +712,7 @@ async fn test_10_database_unavailability() {
 
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -747,6 +755,7 @@ async fn test_11_pg_dump_restore_isolation() {
     let (_agent_id, token) = create_test_agent(&pool, "alice").await;
 
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -938,6 +947,7 @@ async fn test_11_pg_dump_restore_isolation() {
 async fn test_mcp_initialize() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -983,6 +993,7 @@ async fn test_mcp_initialize() {
 async fn test_mcp_tools_list() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1032,6 +1043,7 @@ async fn test_mcp_tools_list() {
 async fn test_mcp_whoami() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1080,6 +1092,7 @@ async fn test_mcp_whoami() {
 async fn test_mcp_post_message_and_read() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1166,6 +1179,7 @@ async fn test_mcp_post_message_and_read() {
 async fn test_mcp_auth_failure() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1211,6 +1225,7 @@ async fn test_mcp_auth_failure() {
 async fn test_mcp_dm_isolation() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1333,6 +1348,7 @@ async fn test_mcp_dm_isolation() {
 async fn test_mcp_notifications() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1365,6 +1381,7 @@ async fn test_mcp_notifications() {
 async fn test_mcp_protocol_version_negotiation() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1454,6 +1471,7 @@ async fn test_mcp_protocol_version_negotiation() {
 async fn test_mcp_tool_error_vs_protocol_error() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1537,6 +1555,7 @@ async fn test_mcp_tool_error_vs_protocol_error() {
 async fn test_mcp_get_and_ping() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),
@@ -1580,6 +1599,7 @@ async fn test_mcp_get_and_ping() {
 async fn test_mcp_content_type_header() {
     let pool = setup_test_db().await;
     let config = Config {
+        oauth: None,
         database_schema: "backchannel_test".to_string(),
         database_url: "unused".to_string(),
         admin_token_sha256: backchannel_core::token::hash_token("admin_token"),

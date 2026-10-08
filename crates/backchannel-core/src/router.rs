@@ -1,4 +1,4 @@
-use crate::auth::{authenticate_admin, authenticate_agent, AuthState};
+use crate::auth::{authenticate_admin, authenticate_agent, authenticate_mcp, AuthState};
 use crate::config::Config;
 use crate::handlers;
 use axum::{
@@ -12,13 +12,50 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 pub fn create_router(pool: PgPool, config: Config) -> Router {
+    let oauth = config
+        .oauth
+        .clone()
+        .map(crate::oauth::OAuthVerifier::new)
+        .transpose()
+        .expect("Invalid OAuth configuration");
+    create_router_with_verifier(pool, config, oauth)
+}
+
+pub(crate) fn create_router_with_verifier(
+    pool: PgPool,
+    config: Config,
+    oauth: Option<crate::oauth::OAuthVerifier>,
+) -> Router {
     let auth_state = AuthState {
+        oauth: oauth.clone(),
         pool: pool.clone(),
         config: Arc::new(config),
     };
 
     // Public routes (no auth)
-    let public_routes = Router::new().route("/healthz", get(handlers::healthz));
+    let mut public_routes = Router::new().route("/healthz", get(handlers::healthz));
+    if let Some(verifier) = oauth.clone() {
+        public_routes = public_routes.merge(
+            Router::new()
+                .route(
+                    "/.well-known/oauth-protected-resource/api/mcp",
+                    get(crate::oauth::protected_resource_metadata),
+                )
+                .route(
+                    "/.well-known/oauth-protected-resource",
+                    get(crate::oauth::protected_resource_metadata),
+                )
+                .with_state(verifier),
+        );
+    }
+    let mcp_routes = Router::new()
+        .route("/api/mcp", any(handlers::mcp_handler))
+        .route_layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            authenticate_mcp,
+        ))
+        .layer(axum::Extension(oauth.is_some()))
+        .with_state(pool.clone());
 
     // Agent-authenticated routes
     let agent_routes = Router::new()
@@ -37,8 +74,7 @@ pub fn create_router(pool: PgPool, config: Config) -> Router {
             post(handlers::create_message),
         )
         .route("/v1/feed", get(handlers::get_feed))
-        .route("/api/mcp", any(handlers::mcp_handler))
-        .layer(middleware::from_fn_with_state(
+        .route_layer(middleware::from_fn_with_state(
             auth_state.clone(),
             authenticate_agent,
         ))
@@ -54,7 +90,7 @@ pub fn create_router(pool: PgPool, config: Config) -> Router {
         .route("/v1/admin/agents/:id", patch(handlers::update_agent))
         .route("/v1/admin/messages", get(handlers::list_all_messages))
         .route("/v1/admin/export", get(handlers::export_messages))
-        .layer(middleware::from_fn_with_state(
+        .route_layer(middleware::from_fn_with_state(
             auth_state,
             authenticate_admin,
         ))
@@ -64,6 +100,7 @@ pub fn create_router(pool: PgPool, config: Config) -> Router {
     Router::new()
         .merge(public_routes)
         .merge(agent_routes)
+        .merge(mcp_routes)
         .merge(admin_routes)
         .layer(TraceLayer::new_for_http())
         .layer(

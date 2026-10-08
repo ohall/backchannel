@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct AuthState {
     pub pool: PgPool,
     pub config: Arc<Config>,
+    pub oauth: Option<crate::oauth::OAuthVerifier>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +73,78 @@ pub async fn authenticate_agent(
     req.extensions_mut().insert(AuthenticatedAgent { agent });
 
     Ok(next.run(req).await)
+}
+
+/// MCP additionally accepts OAuth access tokens. REST/admin remain legacy-only.
+pub async fn authenticate_mcp(
+    State(state): State<AuthState>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    use crate::oauth::{challenge, OAuthFailure};
+    use axum::{http::StatusCode, response::IntoResponse};
+    let Some(verifier) = &state.oauth else {
+        return match authenticate_agent(State(state), req, next).await {
+            Ok(response) => response,
+            Err(error) => error.into_response(),
+        };
+    };
+    if !req
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
+        return crate::oauth::missing_credentials_challenge(&verifier.config);
+    }
+    let token = match extract_bearer_token(req.headers()) {
+        Ok(token) => token,
+        Err(_) => return challenge(&verifier.config, StatusCode::UNAUTHORIZED),
+    };
+    // Existing agent tokens never contain dots. JWTs must not be interpreted as
+    // legacy credentials, nor cause a database lookup before signature checks.
+    let agent_result = if token.contains('.') {
+        let agent_id = match verifier.verify(&token).await {
+            Ok(id) => id,
+            Err(OAuthFailure::InvalidToken) => {
+                return challenge(&verifier.config, StatusCode::UNAUTHORIZED)
+            }
+            Err(OAuthFailure::InsufficientScope) => {
+                return challenge(&verifier.config, StatusCode::FORBIDDEN)
+            }
+            Err(OAuthFailure::Unavailable) => {
+                return AppError::ServiceUnavailable("OAuth signing keys unavailable".into())
+                    .into_response()
+            }
+        };
+        sqlx::query_as::<_, Agent>(
+            "SELECT id, name, token_hash, enabled, created_at FROM agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&state.pool)
+        .await
+    } else {
+        sqlx::query_as::<_, Agent>(
+            "SELECT id, name, token_hash, enabled, created_at FROM agents WHERE token_hash = $1",
+        )
+        .bind(crate::token::hash_token(&token))
+        .fetch_optional(&state.pool)
+        .await
+    };
+    let agent = match agent_result {
+        Ok(Some(agent)) if agent.enabled => agent,
+        Ok(_) => return challenge(&verifier.config, StatusCode::UNAUTHORIZED),
+        Err(error) => return AppError::from(error).into_response(),
+    };
+    if let Err(error) = check_rate_limit(
+        &state.pool,
+        &agent.id.to_string(),
+        state.config.default_rate_limit_per_minute,
+    )
+    .await
+    {
+        return error.into_response();
+    }
+    req.extensions_mut().insert(AuthenticatedAgent { agent });
+    next.run(req).await
 }
 
 /// Authenticate admin token
