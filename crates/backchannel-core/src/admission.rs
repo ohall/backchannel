@@ -82,7 +82,10 @@ pub async fn guard(State(state): State<Admission>, req: Request, next: Next) -> 
         return AppError::ServiceUnavailable("Request capacity exhausted".into()).into_response();
     };
     // Reject before authentication and JSON extraction, even with chunked/no-length bodies.
-    if req.uri().path() == "/api/mcp" && req.method() != Method::POST {
+    // Preserve the existing authenticated GET rejection (and its OAuth challenge).
+    // Every mutation-capable method other than POST is rejected before auth.
+    if req.uri().path() == "/api/mcp" && req.method() != Method::POST && req.method() != Method::GET
+    {
         return (
             StatusCode::METHOD_NOT_ALLOWED,
             [(header::ALLOW, "POST")],

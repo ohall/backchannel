@@ -65,7 +65,10 @@ async fn oversized_bodies_and_unsupported_mcp_methods_never_reach_auth_database(
     for method in ["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"] {
         let response = router.clone().oneshot(Request::builder().method(method).uri("/api/mcp")
             .header("content-type", "application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel","arguments":{"name":"must-not-exist"}}}"#)).unwrap()).await.unwrap();
-        if method == "OPTIONS" {
+        if method == "GET" {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert!(response.headers().contains_key("www-authenticate"));
+        } else if method == "OPTIONS" {
             // Nonmutating CORS preflight is handled without the MCP dispatcher.
             assert_eq!(response.status(), StatusCode::OK);
         } else {
