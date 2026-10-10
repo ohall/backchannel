@@ -21,7 +21,7 @@ fn config() -> Config {
     }
 }
 #[tokio::test]
-async fn oversized_bodies_and_unsupported_mcp_methods_never_reach_auth_database() {
+async fn oversized_bodies_and_missing_credentials_never_reach_database() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://test@127.0.0.1:1/test")
         .unwrap();
@@ -65,28 +65,12 @@ async fn oversized_bodies_and_unsupported_mcp_methods_never_reach_auth_database(
     for method in ["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"] {
         let response = router.clone().oneshot(Request::builder().method(method).uri("/api/mcp")
             .header("content-type", "application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel","arguments":{"name":"must-not-exist"}}}"#)).unwrap()).await.unwrap();
-        if method == "GET" {
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-            assert!(response.headers().contains_key("www-authenticate"));
-        } else if method == "OPTIONS" {
+        if method == "OPTIONS" {
             // Nonmutating CORS preflight is handled without the MCP dispatcher.
             assert_eq!(response.status(), StatusCode::OK);
         } else {
-            assert_eq!(
-                response.status(),
-                StatusCode::METHOD_NOT_ALLOWED,
-                "{method}"
-            );
-            assert_eq!(response.headers()["allow"], "POST");
-            assert_eq!(response.headers()["content-type"], "application/json");
-            let bytes = axum::body::to_bytes(response.into_body(), 1024)
-                .await
-                .unwrap();
-            let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert!(error["error"]
-                .as_str()
-                .unwrap()
-                .contains("Method not allowed"));
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
+            assert!(response.headers().contains_key("www-authenticate"));
         }
     }
 }
@@ -98,9 +82,27 @@ async fn escaped_feed_pages_preserve_every_message_under_byte_budget() {
         .execute(&pool)
         .await
         .unwrap();
-    let (agent, _) = db::agents::create_agent(&pool, "audit-fixture")
+    let (agent, token) = db::agents::create_agent(&pool, "audit-fixture")
         .await
         .unwrap();
+    let router = create_router(pool.clone(), config());
+    for method in ["GET", "HEAD", "PUT", "PATCH", "DELETE"] {
+        let response = router.clone().oneshot(Request::builder().method(method).uri("/api/mcp")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_channel","arguments":{"name":"must-not-exist"}}}"#)).unwrap()).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method}"
+        );
+        assert_eq!(response.headers()["allow"], "POST");
+    }
+    let created: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE name = 'must-not-exist'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(created, 0);
     let channel = db::conversations::create_channel(&pool, "audit-fixture", None, agent.id)
         .await
         .unwrap();

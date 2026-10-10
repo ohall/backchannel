@@ -4,7 +4,6 @@ use crate::error::AppError;
 use axum::{
     body::{to_bytes, Body},
     extract::{ConnectInfo, Request, State},
-    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -81,20 +80,6 @@ pub async fn guard(State(state): State<Admission>, req: Request, next: Next) -> 
     let Ok(_permit) = state.active.try_acquire() else {
         return AppError::ServiceUnavailable("Request capacity exhausted".into()).into_response();
     };
-    // Reject before authentication and JSON extraction, even with chunked/no-length bodies.
-    // Preserve the existing authenticated GET rejection (and its OAuth challenge).
-    // Every mutation-capable method other than POST is rejected before auth.
-    if req.uri().path() == "/api/mcp" && req.method() != Method::POST && req.method() != Method::GET
-    {
-        return (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [(header::ALLOW, "POST")],
-            axum::Json(
-                serde_json::json!({"error": "Method not allowed. Use POST for MCP requests."}),
-            ),
-        )
-            .into_response();
-    }
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let (parts, body) = req.into_parts();
         let bytes = to_bytes(body, state.body_limit).await.map_err(|_| {
@@ -115,7 +100,7 @@ pub async fn guard(State(state): State<Admission>, req: Request, next: Next) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{middleware, routing::post, Router};
+    use axum::{http::StatusCode, middleware, routing::post, Router};
     use tower::ServiceExt;
     #[test]
     fn invalid_credentials_cannot_evade_global_budget_or_create_unbounded_peer_state() {
