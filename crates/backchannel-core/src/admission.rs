@@ -83,7 +83,14 @@ pub async fn guard(State(state): State<Admission>, req: Request, next: Next) -> 
     };
     // Reject before authentication and JSON extraction, even with chunked/no-length bodies.
     if req.uri().path() == "/api/mcp" && req.method() != Method::POST {
-        return (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "POST")]).into_response();
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "POST")],
+            axum::Json(
+                serde_json::json!({"error": "Method not allowed. Use POST for MCP requests."}),
+            ),
+        )
+            .into_response();
     }
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let (parts, body) = req.into_parts();

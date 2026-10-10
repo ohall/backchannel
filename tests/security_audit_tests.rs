@@ -75,6 +75,15 @@ async fn oversized_bodies_and_unsupported_mcp_methods_never_reach_auth_database(
                 "{method}"
             );
             assert_eq!(response.headers()["allow"], "POST");
+            assert_eq!(response.headers()["content-type"], "application/json");
+            let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let error: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(error["error"]
+                .as_str()
+                .unwrap()
+                .contains("Method not allowed"));
         }
     }
 }
