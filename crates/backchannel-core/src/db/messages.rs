@@ -128,8 +128,8 @@ pub async fn list_messages(
             SELECT id, conversation_id, sender_id, body, reply_to_id, client_message_id, created_at
             FROM messages WHERE conversation_id = $1 AND id > $2 ORDER BY id LIMIT $3
         ), budgeted AS (
-            SELECT candidates.*, SUM(6::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
-                - (6::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
+            SELECT candidates.*, SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
+                - (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
         ) SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id
         "#,
     )
@@ -168,8 +168,8 @@ pub async fn list_feed(
         ORDER BY m.id
         LIMIT $3
         ), budgeted AS (
-            SELECT candidates.*, SUM(6::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
-                - (6::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
+            SELECT candidates.*, SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
+                - (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
         ) SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id
         "#
     )
@@ -246,8 +246,8 @@ pub async fn admin_list_messages(
 
     let query = format!(
         "WITH candidates AS ({query}), budgeted AS (SELECT candidates.*, \
-        SUM(6::bigint * octet_length(body) + 2048) OVER (ORDER BY id) - \
-        (6::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates) \
+        SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id) - \
+        (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates) \
         SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id"
     );
     let mut query_builder = sqlx::query_as::<_, Message>(&query).bind(after_id);
@@ -276,7 +276,8 @@ pub async fn admin_list_messages(
     Ok(bounded_page(messages, limit))
 }
 
-/// Conservative serialized-byte accounting covers JSON escaping and metadata.
+/// Conservative serialized-byte accounting covers REST JSON, the additional
+/// MCP text-string escaping, and metadata.
 /// Never advance the cursor past the last returned message, even on byte truncation.
 const PAGE_BYTES: usize = 256 * 1024;
 fn bounded_page(messages: Vec<Message>, limit: u32) -> PaginatedResponse<MessageResponse> {
@@ -284,7 +285,7 @@ fn bounded_page(messages: Vec<Message>, limit: u32) -> PaginatedResponse<Message
     let mut used = 1024; // pagination/MCP envelope
     let mut items: Vec<MessageResponse> = Vec::new();
     for message in messages {
-        let cost = message.body.len().saturating_mul(6).saturating_add(2048);
+        let cost = message.body.len().saturating_mul(7).saturating_add(2048);
         if items.len() >= limit as usize || used + cost > PAGE_BYTES {
             break;
         }
@@ -329,6 +330,16 @@ mod budget_tests {
         let next = bounded_page(vec![message(2, "legitimate next message")], 100);
         assert_eq!(next.items[0].id, "2");
         assert!(!next.has_more);
+    }
+    #[test]
+    fn mcp_text_string_encoding_stays_within_the_same_budget() {
+        let body = "\u{0001}".repeat(10000);
+        let rows = (1..=100).map(|id| message(id, &body)).collect();
+        let page = bounded_page(rows, 100);
+        let text = serde_json::to_string(&page).unwrap();
+        let mcp = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": text}]}});
+        assert!(serde_json::to_vec(&mcp).unwrap().len() <= PAGE_BYTES);
+        assert!(page.has_more);
     }
     #[test]
     fn exact_row_boundary_preserves_cursor() {
