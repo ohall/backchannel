@@ -25,7 +25,7 @@ Get the postgres password from Supabase Dashboard:
 - Project Settings > Database > Database password
 
 ```bash
-psql "postgresql://postgres.arfxachrbugnvbneyboe:[YOUR_PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+psql "postgresql://postgres.arfxachrbugnvbneyboe:[YOUR_PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full"
 ```
 
 ### 2. Create Schemas
@@ -135,24 +135,24 @@ RESET ROLE;
 
 **Migration** (for running `cargo run --bin backchannel-migrate`):
 ```
-postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 ```
 
 **Runtime** (for Vercel function):
 ```
-postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 ```
 
 ### Preview
 
 **Migration**:
 ```
-postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 ```
 
 **Runtime**:
 ```
-postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 ```
 
 ## Environment Variables
@@ -160,7 +160,7 @@ postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-u
 ### Production
 
 ```bash
-DATABASE_URL=postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 DATABASE_SCHEMA=backchannel
 ADMIN_TOKEN_SHA256=[PRODUCTION_HASH]
 ```
@@ -168,7 +168,7 @@ ADMIN_TOKEN_SHA256=[PRODUCTION_HASH]
 ### Preview
 
 ```bash
-DATABASE_URL=postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 DATABASE_SCHEMA=backchannel_preview
 ADMIN_TOKEN_SHA256=[PREVIEW_HASH]
 ```
@@ -178,7 +178,7 @@ ADMIN_TOKEN_SHA256=[PREVIEW_HASH]
 ### Production
 
 ```bash
-export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full"
 export DATABASE_SCHEMA="backchannel"
 cargo run --bin backchannel-migrate
 ```
@@ -186,7 +186,7 @@ cargo run --bin backchannel-migrate
 ### Preview
 
 ```bash
-export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full"
 export DATABASE_SCHEMA="backchannel_preview"
 cargo run --bin backchannel-migrate
 ```

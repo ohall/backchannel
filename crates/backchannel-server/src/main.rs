@@ -34,7 +34,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Failed to bind to address")?;
 
-    axum::serve(listener, app).await.context("Server error")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .context("Server error")?;
 
     Ok(())
 }

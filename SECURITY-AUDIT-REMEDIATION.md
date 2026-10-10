@@ -1,0 +1,19 @@
+# October 8 audit remediation
+
+This patch addresses the source findings from the October 8, 2026 audit. It includes the still-unmerged PR #8 viewer so those fixes can be reviewed together. Publishing this branch does not activate the viewer or change production configuration.
+
+| Finding | Source change | Remaining acceptance |
+| --- | --- | --- |
+| C1: pre-authentication cost | Process-wide 1,200/minute request budget, 32 concurrent requests, 15-second deadline, direct-peer 240/minute budget when connection identity exists; no forwarding-header trust. DB statement/lock timeouts. | Verify edge-wide limits across serverless replicas and cold starts. Vercel does not supply a trusted peer through this adapter; its process budget still applies. |
+| C2: total body limit | Configured 64 KiB enforced before bearer checks/JSON parsing, including absent Content-Length. | Streaming boundary regression and normal operations in CI. |
+| C3: MCP methods | Only POST dispatches JSON-RPC. Other dispatch methods return 405 with Allow: POST; nonmutating OPTIONS is served by CORS. | Method-matrix regression. |
+| C4: database identity | Runtime and migration URLs reject omitted/weaker TLS modes for remote hosts; require verify-full. Explicit loopback disable is the isolated test exception. Schema names validated and search_path bound. | Provision provider CA if required; verify production pooler certificate/hostname and rejection with wrong CA/hostname before deploying. Existing require URLs must be updated first. |
+| P2: instruction laundering | Message/conversation and MCP outputs carry untrusted-content markers. Shipped receiving instructions preserve identity and forbid treating content as user approval or runtime policy. | Model/runtime integration tests and independent tool-side approvals are still required; labels alone do not enforce authority. |
+| P3: oversized feed context | Message feeds/conversation/admin pagination bound serialized content to 256 KiB, including escaping; SQL limits transport to a bounded prefix plus a sentinel. Cursor is the last returned row. | Database pagination test ensures long messages do not hide/skip the following legitimate message. |
+| V1: provider logout | Fixed return target resolved against configured APP_BASE_URL; actual pinned SDK tests cover both V2/OIDC, cookie deletion and external return rejection. | Real provider SSO/logout/callback and mobile/session lifecycle. |
+| V2: SDK proxy exposure | /me and /my-org rejected for every method. Only login/callback/logout delegate to the SDK; normal pages return NextResponse.next after owner checks. Auth mutations return 405. | Production HTTP checks; no actual provider mutation is needed. |
+| Multi-tab display | Protected documents revalidate on focus/visibility, BFCache restore and expiry. | Real browser cross-tab and Back/Forward verification. |
+
+Coordination P1 and P4 are addressed in a separate agent-coordination proposal: a broker with independently configured credentials and operator-owned SQLite authority, plus explicitly pinned skill refresh. The legacy cooperative Git queue remains untrusted. No broker has been deployed, no clients migrated, and no real credentials or queue records changed. Recipient identity still cannot prove truthful completion; consequential adapters and independent effect verification remain disabled/outstanding.
+
+Local validation: Rust unit tests (29 passed, one disposable-DB test ignored); all-target workspace compile check; unauthenticated request-size/MCP method regression; viewer core (40 passed), UI/security (59 passed), typecheck, lint, production build and 22 production HTTP cases. Database integration is delegated to the existing isolated PostgreSQL CI job because this sandbox cannot switch to a non-root database process. Live-provider, deployed SHA/configuration and production TLS/edge checks are not established by these synthetic passes.

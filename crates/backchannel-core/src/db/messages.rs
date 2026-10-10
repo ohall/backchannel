@@ -119,16 +119,18 @@ pub async fn list_messages(
     after_id: i64,
     limit: u32,
 ) -> Result<PaginatedResponse<MessageResponse>, AppError> {
-    let limit = limit.min(500);
+    let limit = limit.clamp(1, 500);
     let fetch_limit = (limit + 1) as i64;
 
     let messages = sqlx::query_as::<_, Message>(
         r#"
-        SELECT id, conversation_id, sender_id, body, reply_to_id, client_message_id, created_at
-        FROM messages
-        WHERE conversation_id = $1 AND id > $2
-        ORDER BY id
-        LIMIT $3
+        WITH candidates AS (
+            SELECT id, conversation_id, sender_id, body, reply_to_id, client_message_id, created_at
+            FROM messages WHERE conversation_id = $1 AND id > $2 ORDER BY id LIMIT $3
+        ), budgeted AS (
+            SELECT candidates.*, SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
+                - (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
+        ) SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id
         "#,
     )
     .bind(conversation_id)
@@ -137,24 +139,7 @@ pub async fn list_messages(
     .fetch_all(pool)
     .await?;
 
-    let has_more = messages.len() > limit as usize;
-    let items: Vec<MessageResponse> = messages
-        .into_iter()
-        .take(limit as usize)
-        .map(|m| m.into())
-        .collect();
-
-    let next_cursor = if has_more && !items.is_empty() {
-        Some(items.last().unwrap().id.clone())
-    } else {
-        None
-    };
-
-    Ok(PaginatedResponse {
-        items,
-        next_cursor,
-        has_more,
-    })
+    Ok(bounded_page(messages, limit))
 }
 
 /// List feed messages (public + agent's DMs) with cursor pagination
@@ -164,11 +149,12 @@ pub async fn list_feed(
     after_id: i64,
     limit: u32,
 ) -> Result<PaginatedResponse<MessageResponse>, AppError> {
-    let limit = limit.min(500);
+    let limit = limit.clamp(1, 500);
     let fetch_limit = (limit + 1) as i64;
 
     let messages = sqlx::query_as::<_, Message>(
         r#"
+        WITH candidates AS (
         SELECT m.id, m.conversation_id, m.sender_id, m.body, m.reply_to_id, m.client_message_id, m.created_at
         FROM messages m
         INNER JOIN conversations c ON m.conversation_id = c.id
@@ -181,6 +167,10 @@ pub async fn list_feed(
         )
         ORDER BY m.id
         LIMIT $3
+        ), budgeted AS (
+            SELECT candidates.*, SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id)
+                - (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates
+        ) SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id
         "#
     )
     .bind(after_id)
@@ -189,24 +179,7 @@ pub async fn list_feed(
     .fetch_all(pool)
     .await?;
 
-    let has_more = messages.len() > limit as usize;
-    let items: Vec<MessageResponse> = messages
-        .into_iter()
-        .take(limit as usize)
-        .map(|m| m.into())
-        .collect();
-
-    let next_cursor = if has_more && !items.is_empty() {
-        Some(items.last().unwrap().id.clone())
-    } else {
-        None
-    };
-
-    Ok(PaginatedResponse {
-        items,
-        next_cursor,
-        has_more,
-    })
+    Ok(bounded_page(messages, limit))
 }
 
 /// Admin message filter parameters
@@ -232,7 +205,7 @@ pub async fn admin_list_messages(
     until: Option<DateTime<Utc>>,
     search: Option<&str>,
 ) -> Result<PaginatedResponse<MessageResponse>, AppError> {
-    let limit = limit.min(500);
+    let limit = limit.clamp(1, 500);
     let fetch_limit = (limit + 1) as i64;
 
     // Build dynamic query
@@ -271,6 +244,12 @@ pub async fn admin_list_messages(
     param_count += 1;
     query.push_str(&format!(" ORDER BY id LIMIT ${}", param_count));
 
+    let query = format!(
+        "WITH candidates AS ({query}), budgeted AS (SELECT candidates.*, \
+        SUM(7::bigint * octet_length(body) + 2048) OVER (ORDER BY id) - \
+        (7::bigint * octet_length(body) + 2048) AS prior_bytes FROM candidates) \
+        SELECT * FROM budgeted WHERE prior_bytes < 262144 ORDER BY id"
+    );
     let mut query_builder = sqlx::query_as::<_, Message>(&query).bind(after_id);
 
     if let Some(cid) = conversation_id {
@@ -294,22 +273,79 @@ pub async fn admin_list_messages(
 
     let messages = query_builder.fetch_all(pool).await?;
 
-    let has_more = messages.len() > limit as usize;
-    let items: Vec<MessageResponse> = messages
-        .into_iter()
-        .take(limit as usize)
-        .map(|m| m.into())
-        .collect();
+    Ok(bounded_page(messages, limit))
+}
 
-    let next_cursor = if has_more && !items.is_empty() {
-        Some(items.last().unwrap().id.clone())
+/// Conservative serialized-byte accounting covers REST JSON, the additional
+/// MCP text-string escaping, and metadata.
+/// Never advance the cursor past the last returned message, even on byte truncation.
+const PAGE_BYTES: usize = 256 * 1024;
+fn bounded_page(messages: Vec<Message>, limit: u32) -> PaginatedResponse<MessageResponse> {
+    let total = messages.len();
+    let mut used = 1024; // pagination/MCP envelope
+    let mut items: Vec<MessageResponse> = Vec::new();
+    for message in messages {
+        let cost = message.body.len().saturating_mul(7).saturating_add(2048);
+        if items.len() >= limit as usize || used + cost > PAGE_BYTES {
+            break;
+        }
+        used += cost;
+        items.push(message.into());
+    }
+    let has_more = items.len() < total;
+    let next_cursor = if has_more {
+        items.last().map(|m| m.id.clone())
     } else {
         None
     };
-
-    Ok(PaginatedResponse {
+    PaginatedResponse {
         items,
         next_cursor,
         has_more,
-    })
+    }
+}
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    fn message(id: i64, body: &str) -> Message {
+        Message {
+            id,
+            conversation_id: Uuid::nil(),
+            sender_id: Uuid::nil(),
+            body: body.into(),
+            reply_to_id: None,
+            client_message_id: "test".into(),
+            created_at: Utc::now(),
+        }
+    }
+    #[test]
+    fn escaped_large_feed_is_bounded_and_resumable() {
+        let body = "\u{0001}".repeat(32768);
+        let rows = (1..=100).map(|n| message(n, &body)).collect();
+        let page = bounded_page(rows, 100);
+        assert!(serde_json::to_vec(&page).unwrap().len() < PAGE_BYTES);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.next_cursor.as_deref(), Some("1"));
+        assert!(page.has_more);
+        let next = bounded_page(vec![message(2, "legitimate next message")], 100);
+        assert_eq!(next.items[0].id, "2");
+        assert!(!next.has_more);
+    }
+    #[test]
+    fn mcp_text_string_encoding_stays_within_the_same_budget() {
+        let body = "\u{0001}".repeat(10000);
+        let rows = (1..=100).map(|id| message(id, &body)).collect();
+        let page = bounded_page(rows, 100);
+        let text = serde_json::to_string(&page).unwrap();
+        let mcp = serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": text}]}});
+        assert!(serde_json::to_vec(&mcp).unwrap().len() <= PAGE_BYTES);
+        assert!(page.has_more);
+    }
+    #[test]
+    fn exact_row_boundary_preserves_cursor() {
+        let page = bounded_page(vec![message(1, "a"), message(2, "b"), message(3, "c")], 2);
+        assert_eq!(page.next_cursor.as_deref(), Some("2"));
+        assert!(page.has_more);
+        assert!(bounded_page(Vec::new(), 100).next_cursor.is_none());
+    }
 }

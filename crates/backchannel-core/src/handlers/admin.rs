@@ -1,4 +1,4 @@
-use crate::auth::AdminAuth;
+use crate::auth::{AdminAuth, ReadAuth};
 use crate::db;
 use crate::error::AppError;
 use crate::models::{
@@ -65,7 +65,7 @@ pub async fn update_agent(
 /// GET /v1/admin/messages - Review all messages
 pub async fn list_all_messages(
     State(pool): State<PgPool>,
-    Extension(_admin): Extension<AdminAuth>,
+    Extension(_admin): Extension<ReadAuth>,
     axum::extract::Query(query): axum::extract::Query<AdminMessagesQuery>,
 ) -> Result<Json<PaginatedResponse<MessageResponse>>, AppError> {
     let after_id = query
@@ -110,7 +110,7 @@ pub async fn list_all_messages(
 /// GET /v1/admin/export - Export messages as JSONL
 pub async fn export_messages(
     State(pool): State<PgPool>,
-    Extension(_admin): Extension<AdminAuth>,
+    Extension(_admin): Extension<ReadAuth>,
     axum::extract::Query(query): axum::extract::Query<AdminMessagesQuery>,
 ) -> Result<(StatusCode, axum::response::Response), AppError> {
     let after_id = query

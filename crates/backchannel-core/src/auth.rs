@@ -25,6 +25,69 @@ pub struct AuthenticatedAgent {
 #[derive(Clone, Debug)]
 pub struct AdminAuth;
 
+/// Only explicitly registered read handlers accept this marker.
+#[derive(Clone, Debug)]
+pub struct ReadAuth;
+
+fn is_viewer_token(config: &Config, hash: &str) -> bool {
+    config
+        .viewer_token_sha256
+        .as_ref()
+        .is_some_and(|expected| verify_token_hash(hash, &expected.to_ascii_lowercase()))
+}
+
+pub async fn authenticate_read(
+    State(state): State<AuthState>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let hash = crate::token::hash_token(&extract_bearer_token(req.headers())?);
+    let identity = if verify_token_hash(&hash, &state.config.admin_token_sha256) {
+        "admin"
+    } else if is_viewer_token(&state.config, &hash) {
+        if req.method() != axum::http::Method::GET {
+            return Err(AppError::Unauthorized("Read access requires GET".into()));
+        }
+        if matches!(req.uri().path(), "/v1/admin/messages" | "/v1/admin/export") {
+            let axum::extract::Query(query) =
+                axum::extract::Query::<crate::models::AdminMessagesQuery>::try_from_uri(req.uri())
+                    .map_err(|_| AppError::BadRequest("Invalid read query".into()))?;
+            if !(1..=100).contains(&query.limit.unwrap_or(100))
+                || query
+                    .search
+                    .as_ref()
+                    .is_some_and(|s| s.trim().is_empty() || s.len() > 256 || s.contains('\0'))
+                || query
+                    .after
+                    .as_ref()
+                    .is_some_and(|s| s.len() > 19 || s.parse::<i64>().map_or(true, |n| n < 0))
+            {
+                return Err(AppError::BadRequest("Invalid read query bounds".into()));
+            }
+        }
+        "viewer"
+    } else {
+        return Err(AppError::Unauthorized("Invalid read credential".into()));
+    };
+    check_rate_limit(
+        &state.pool,
+        identity,
+        state.config.admin_rate_limit_per_minute,
+    )
+    .await?;
+    req.extensions_mut().insert(ReadAuth);
+    Ok(next.run(req).await)
+}
+
+pub async fn read_no_store(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, no-store".parse().unwrap(),
+    );
+    response
+}
+
 /// Extract bearer token from Authorization header
 fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Result<String, AppError> {
     let auth_header = headers
@@ -38,7 +101,13 @@ fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Result<String, AppEr
         ));
     }
 
-    Ok(auth_header[7..].to_string())
+    let token = &auth_header[7..];
+    if token.is_empty() || token.len() > 16 * 1024 {
+        return Err(AppError::Unauthorized(
+            "Invalid bearer credential length".into(),
+        ));
+    }
+    Ok(token.to_string())
 }
 
 /// Authenticate agent token
@@ -53,6 +122,9 @@ pub async fn authenticate_agent(
     tracing::debug!("Authenticating agent request");
 
     let token_hash = crate::token::hash_token(&token);
+    if is_viewer_token(&state.config, &token_hash) {
+        return Err(AppError::Unauthorized("Invalid agent token".into()));
+    }
 
     let agent = sqlx::query_as::<_, Agent>(
         "SELECT id, name, token_hash, enabled, created_at FROM agents WHERE token_hash = $1",
@@ -99,6 +171,9 @@ pub async fn authenticate_mcp(
         Ok(token) => token,
         Err(_) => return challenge(&verifier.config, StatusCode::UNAUTHORIZED),
     };
+    if is_viewer_token(&state.config, &crate::token::hash_token(&token)) {
+        return challenge(&verifier.config, StatusCode::UNAUTHORIZED);
+    }
     // Existing agent tokens never contain dots. JWTs must not be interpreted as
     // legacy credentials, nor cause a database lookup before signature checks.
     let agent_result = if token.contains('.') {

@@ -15,3 +15,5 @@ pub use feed::*;
 pub use healthz::*;
 pub use mcp::*;
 pub use messages::*;
+
+pub mod viewer;
