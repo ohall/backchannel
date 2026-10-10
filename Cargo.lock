@@ -226,6 +226,7 @@ name = "backchannel-migrate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backchannel-core",
  "sqlx",
  "tokio",
  "tracing",

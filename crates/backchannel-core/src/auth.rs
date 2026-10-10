@@ -101,7 +101,13 @@ fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Result<String, AppEr
         ));
     }
 
-    Ok(auth_header[7..].to_string())
+    let token = &auth_header[7..];
+    if token.is_empty() || token.len() > 16 * 1024 {
+        return Err(AppError::Unauthorized(
+            "Invalid bearer credential length".into(),
+        ));
+    }
+    Ok(token.to_string())
 }
 
 /// Authenticate agent token

@@ -34,6 +34,7 @@ pub(crate) fn create_router_with_verifier(
         &config.admin_token_sha256,
     )
     .expect("Invalid viewer credential configuration");
+    let admission = crate::admission::Admission::new(config.max_body_size_bytes);
     let auth_state = AuthState {
         oauth: oauth.clone(),
         pool: pool.clone(),
@@ -130,6 +131,10 @@ pub(crate) fn create_router_with_verifier(
         .merge(mcp_routes)
         .merge(admin_routes)
         .merge(read_routes)
+        .layer(middleware::from_fn_with_state(
+            admission,
+            crate::admission::guard,
+        ))
         .layer(TraceLayer::new_for_http())
         .layer(
             CorsLayer::new()

@@ -29,7 +29,7 @@ The project uses **role-based schema isolation**:
 
 Connection string format (session pooler, port 5432):
 ```
-postgresql://[role].[project-ref]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+postgresql://[role].[project-ref]:[password]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 ```
 
 **Why session pooler (port 5432)?**
@@ -41,9 +41,9 @@ postgresql://[role].[project-ref]:[password]@aws-0-us-east-1.pooler.supabase.com
 
 #### SSL Configuration
 
-- Deployed URLs MUST include `sslmode=require`; the code follows the URL and does not force TLS.
-- With sqlx, `sslmode=require` encrypts the connection but does not verify the server certificate.
-- For full verification use `sslmode=verify-full&sslrootcert=<supabase-root-ca>` (not configured in v1).
+- Remote URLs MUST include `sslmode=verify-full`; weaker or omitted modes are rejected by runtime startup.
+- Provision the provider CA where required and reference it with `sslrootcert=/absolute/path/to/provider-ca.crt`. Verify the selected session-pooler hostname matches its certificate before deployment.
+- Only isolated loopback test URLs may use explicit `sslmode=disable`.
 
 ### Database Migrations
 
@@ -51,12 +51,12 @@ Run migrations **before** deploying code:
 
 ```bash
 # Production (migration role, not postgres)
-export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full"
 export DATABASE_SCHEMA=backchannel
 cargo run -p backchannel-migrate --bin backchannel-migrate
 
 # Preview
-export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+export DATABASE_URL="postgresql://backchannel_preview_migrate.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full"
 export DATABASE_SCHEMA=backchannel_preview
 cargo run -p backchannel-migrate --bin backchannel-migrate
 ```
@@ -83,7 +83,7 @@ Set via Vercel dashboard or CLI:
 
 ```bash
 vercel env add DATABASE_URL production
-# Paste: postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+# Paste: postgresql://backchannel_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 
 vercel env add DATABASE_SCHEMA production
 # Enter: backchannel
@@ -96,7 +96,7 @@ vercel env add ADMIN_TOKEN_SHA256 production
 
 ```bash
 vercel env add DATABASE_URL preview
-# Paste: postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+# Paste: postgresql://backchannel_preview_runtime.arfxachrbugnvbneyboe:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full
 
 vercel env add DATABASE_SCHEMA preview
 # Enter: backchannel_preview
@@ -214,7 +214,7 @@ Store backups securely off-site.
 
 #### "SSL connection required"
 
-**Cause**: Missing `?sslmode=require` parameter
+**Cause**: Missing `?sslmode=verify-full` parameter
 **Fix**: Add it to DATABASE_URL
 
 #### "Project paused"

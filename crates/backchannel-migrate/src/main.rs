@@ -1,7 +1,6 @@
 use anyhow::Context;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use std::env;
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,7 +13,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Connecting to database for migrations (schema: {})", schema);
 
-    let options = PgConnectOptions::from_str(&database_url).context("Invalid DATABASE_URL")?;
+    backchannel_core::db::validate_schema(&schema)?;
+    let options =
+        backchannel_core::db::connection_options(&database_url).context("Invalid DATABASE_URL")?;
 
     let schema_for_connect = schema.clone();
     let pool = PgPoolOptions::new()
@@ -39,7 +40,8 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 // Set search_path for this connection
-                sqlx::query(&format!("SET search_path TO {}", schema))
+                sqlx::query("SELECT set_config('search_path', $1, false)")
+                    .bind(&schema)
                     .execute(&mut *conn)
                     .await?;
 

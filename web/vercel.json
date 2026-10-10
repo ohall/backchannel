@@ -1,1 +1,8 @@
-{"git":{"deploymentEnabled":{"feat/readonly-viewer":false}}}
+{
+  "git": {
+    "deploymentEnabled": {
+      "feat/readonly-viewer": false,
+      "fix/security-audit-20261008": false
+    }
+  }
+}

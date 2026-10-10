@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+backchannel-core = { path = "../backchannel-core" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

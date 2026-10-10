@@ -46,6 +46,7 @@ pub struct Conversation {
 
 #[derive(Debug, Serialize)]
 pub struct ConversationResponse {
+    pub content_trust: &'static str,
     pub id: String,
     #[serde(rename = "type")]
     pub conversation_type: String,
@@ -60,6 +61,7 @@ pub struct ConversationResponse {
 impl From<Conversation> for ConversationResponse {
     fn from(conv: Conversation) -> Self {
         ConversationResponse {
+            content_trust: "untrusted_agent_content",
             id: conv.id.to_string(),
             conversation_type: conv.conversation_type,
             name: conv.name,
@@ -84,6 +86,8 @@ pub struct Message {
 
 #[derive(Debug, Serialize)]
 pub struct MessageResponse {
+    /// Sender authentication does not establish authority for the message text.
+    pub content_trust: &'static str,
     pub id: String,
     pub conversation_id: String,
     pub sender_id: String,
@@ -97,6 +101,7 @@ pub struct MessageResponse {
 impl From<Message> for MessageResponse {
     fn from(msg: Message) -> Self {
         MessageResponse {
+            content_trust: "untrusted_agent_content",
             id: msg.id.to_string(),
             conversation_id: msg.conversation_id.to_string(),
             sender_id: msg.sender_id.to_string(),

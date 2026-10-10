@@ -77,3 +77,7 @@ Complete MCP OAuth first, per the requested priority. Before viewer activation:
 Mocked tests establish code behavior only. They do not establish live Auth0
 configuration, provider permissions, a deployed viewer, or successful real login.
 See `web/README.md` for local checks and application configuration.
+
+## Security acceptance after the October audit
+
+Logout now emits the absolute configured `APP_BASE_URL` plus `/login`. Register that exact URL at Auth0. Unused SDK `/me` and `/my-org` families return 404 for all methods; application pages bypass SDK middleware after owner checks. Protected documents revalidate when focused or visible again. Verify real login/callback/logout, provider SSO termination, cancellation, multi-tab focus and Back/Forward on the intended domain before activation. Synthetic SDK and HTTP tests do not establish tenant configuration or live browser behavior.
